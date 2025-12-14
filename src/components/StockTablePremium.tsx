@@ -21,6 +21,12 @@ import {
   Sparkles,
   Search,
   NotebookTabs,
+
+  Receipt,
+
+  BatteryIcon,
+  GlassWaterIcon,
+  LucideGalleryHorizontal,
 } from "lucide-react";
 
 /* ================= TYPES ================= */
@@ -313,7 +319,7 @@ export default function StockTablePremium({
             <div className="flex justify-between">
               <div>
                 <div className="font-semibold">{r.Deskripsi}</div>
-                <div className=" text-xs text-zinc-500">Number Stock: <span className="font-semibold text-blue-700 font-sm">{r.NoStok}</span></div>
+                <div className="flex items-center gap-1 text-xs text-zinc-500"><Receipt size={14} /> Number Stock: <span className="font-semibold text-blue-700 font-sm">{r.NoStok}</span></div>
               </div>
 
               <RowActions
@@ -328,10 +334,10 @@ export default function StockTablePremium({
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>Batch: <span className="font-semibold text-red-700">{r.Batch}</span></div>
-              <div>Qty: {r.Qty}</div>
-              <div>Terpakai: {r.TERPAKAI}</div>
-              <div>Refill: {r.REFILL}</div>
+              <div className="flex items-center gap-1"><BatteryIcon size={14} /> Batch: <span className="font-semibold text-red-700">{r.Batch}</span></div>
+              <div className="flex items-center gap-1"><GlassWaterIcon size={14} /> Qty: {r.Qty}</div>
+              <div className="flex items-center gap-1"><LucideGalleryHorizontal size={14} /> <span className="font-semibold text-green-700">Terpakai: {r.TERPAKAI}</span></div>
+              <div className="flex items-center gap-1"><RefreshCcw size={14} /> <span className="font-semibold text-green-700">Refill: {r.REFILL} </span></div>
             </div>
 
             <div className="flex justify-between items-center border-t pt-2">
