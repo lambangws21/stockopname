@@ -313,7 +313,7 @@ export default function StockTablePremium({
             <div className="flex justify-between">
               <div>
                 <div className="font-semibold">{r.Deskripsi}</div>
-                <div className="text-xs text-zinc-500">{r.NoStok}</div>
+                <div className=" text-xs text-zinc-500">Number Stock: <span className="font-semibold text-blue-700 font-sm">{r.NoStok}</span></div>
               </div>
 
               <RowActions
@@ -328,7 +328,7 @@ export default function StockTablePremium({
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>Batch: {r.Batch}</div>
+              <div>Batch: <span className="font-semibold text-red-700">{r.Batch}</span></div>
               <div>Qty: {r.Qty}</div>
               <div>Terpakai: {r.TERPAKAI}</div>
               <div>Refill: {r.REFILL}</div>
