@@ -1,41 +1,40 @@
 "use client";
 
-import {  useEffect, useRef, useState } from "react";
-import { motion} from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import ExcelJS from "exceljs";
+import {
+  Search,
+  FileSpreadsheet,
+  RefreshCcw,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+  NotebookTabs,
+} from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { StockRow } from "@/types/stock";
 import { useStockCRUD } from "@/hooks/useStockCRUD";
 import { useStockTable } from "@/hooks/useStockTable";
-
 import EditModal from "./EditModal";
 import RowActions from "./RowActions";
 import HistoryTimelineModal from "./HistoryModalTimeline";
 
-import {
-  ChevronLeft,
-  ChevronRight,
-  FileSpreadsheet,
-  RefreshCcw,
-  Plus,
-  Sparkles,
-  Search,
-  NotebookTabs,
-
-  Receipt,
-
-  BatteryIcon,
-  GlassWaterIcon,
-  LucideGalleryHorizontal,
-} from "lucide-react";
-
 /* ================= TYPES ================= */
-type ChangeInfo = {
-  before: string | number;
-  after: string | number;
-};
+type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
 
-type ChangeMap = Record<number, Partial<Record<keyof StockRow, ChangeInfo>>>;
+/* ================= DEBOUNCE ================= */
+function useDebounce<T>(value: T, delay = 300) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+
+  return debounced;
+}
 
 /* ================= COMPONENT ================= */
 export default function StockTablePremium({
@@ -44,79 +43,87 @@ export default function StockTablePremium({
   sheet?: string;
 }) {
   const { data, loading, reload, createRow, updateRow } = useStockCRUD({ sheet });
-  const table = useStockTable(data);
 
   const [editOpen, setEditOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<StockRow | null>(null);
 
-  const [changes, setChanges] = useState<ChangeMap>({});
+  const [search, setSearch] = useState("");
+  const [mode, setMode] = useState<FilterMode>("ALL");
+
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyNo, setHistoryNo] = useState<number | null>(null);
 
-  const [search, setSearch] = useState("");
+  const debounced = useDebounce(search, 350);
 
-  const topRef = useRef<HTMLDivElement>(null);
+  /* ================= AUTO BARCODE ================= */
   useEffect(() => {
-    topRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [table.page]);
-
-  /* ================= ACTIONS ================= */
-  const openNew = () => {
-    setSelectedRow({
-      No: 0,
-      NoStok: "",
-      Deskripsi: "",
-      Batch: "",
-      Qty: 0,
-      TotalQty: 0,
-      TERPAKAI: 0,
-      REFILL: 0,
-      KET: "",
-    });
-    setEditOpen(true);
-  };
-
-  const handleSave = async (payload: StockRow) => {
-    if (payload.No === 0) {
-      await createRow(payload);
-      setEditOpen(false);
-      return;
-    }
-
-    const before = data.find((d) => d.No === payload.No);
-    if (!before) return;
-
-    await updateRow(payload);
-
-    const diff: Partial<Record<keyof StockRow, ChangeInfo>> = {};
-    (Object.keys(payload) as (keyof StockRow)[]).forEach((k) => {
-      if (payload[k] !== before[k]) {
-        diff[k] = { before: before[k], after: payload[k] };
+    const onScan = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && search.length > 3) {
+        setMode("REF");
       }
+    };
+    window.addEventListener("keydown", onScan);
+    return () => window.removeEventListener("keydown", onScan);
+  }, [search]);
+
+  /* ================= FILTER ================= */
+  const filteredData = useMemo(() => {
+    if (!debounced) return data;
+    const q = debounced.toLowerCase();
+
+    return data.filter((r) => {
+      const ref = String(r.NoStok ?? "").toLowerCase();
+      const lot = String(r.Batch ?? "").toLowerCase();
+      const nama = String(r.Deskripsi ?? "").toLowerCase();
+      const no = String(r.No ?? "").toLowerCase();
+
+      if (mode === "REF") return ref.includes(q);
+      if (mode === "LOT") return lot.includes(q);
+      if (mode === "NAMA") return nama.includes(q);
+
+      return ref.includes(q) || lot.includes(q) || nama.includes(q) || no.includes(q);
     });
+  }, [data, debounced, mode]);
 
-    setChanges((p) => ({ ...p, [payload.No]: diff }));
+  const tableData = useStockTable(filteredData);
 
-    setTimeout(() => {
-      setChanges((p) => {
-        const c = { ...p };
-        delete c[payload.No];
-        return c;
-      });
-    }, 6000);
+  /* ================= SUMMARY (FILTERED) ================= */
+  const summary = useMemo(() => {
+    return filteredData.reduce(
+      (acc, r) => {
+        acc.count += 1;
+        acc.qty += Number(r.Qty || 0);
+        acc.used += Number(r.TERPAKAI || 0);
+        acc.refill += Number(r.REFILL || 0);
+        return acc;
+      },
+      { count: 0, qty: 0, used: 0, refill: 0 }
+    );
+  }, [filteredData]);
 
-    setEditOpen(false);
+  /* ================= HIGHLIGHT ================= */
+  const highlight = (text: string | number) => {
+    if (!debounced) return text;
+    const str = String(text);
+    const q = debounced.toLowerCase();
+    const idx = str.toLowerCase().indexOf(q);
+    if (idx === -1) return str;
+
+    return (
+      <>
+        {str.slice(0, idx)}
+        <mark className="bg-yellow-300 text-black rounded px-1">
+          {str.slice(idx, idx + q.length)}
+        </mark>
+        {str.slice(idx + q.length)}
+      </>
+    );
   };
 
   /* ================= EXPORT ================= */
   const handleExport = async () => {
-    const workbook = new ExcelJS.Workbook();
-    workbook.creator = "Stock Dashboard";
-    workbook.created = new Date();
-
-    const ws = workbook.addWorksheet(sheet, {
-      views: [{ state: "frozen", ySplit: 1 }],
-    });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet(sheet);
 
     const headers: (keyof StockRow)[] = [
       "No",
@@ -131,20 +138,11 @@ export default function StockTablePremium({
     ];
 
     ws.addRow(headers);
+    headers.forEach((_, i) => (ws.getColumn(i + 1).width = 18));
+    tableData.sorted.forEach((r) => ws.addRow(headers.map((h) => r[h])));
 
-    ws.getRow(1).eachCell((cell) => {
-      cell.font = { bold: true };
-      cell.alignment = { horizontal: "center" };
-    });
-
-    table.sorted.forEach((row) => {
-      ws.addRow(headers.map((h) => row[h]));
-    });
-
-    headers.forEach((_, i) => (ws.getColumn(i + 1).width = 16));
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], {
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
 
@@ -156,171 +154,252 @@ export default function StockTablePremium({
     URL.revokeObjectURL(url);
   };
 
-  /* ================= HELPERS ================= */
-  const renderCell = (row: StockRow, field: keyof StockRow) => {
-    const change = changes[row.No]?.[field];
-    return (
-      <div className="flex items-center gap-2">
-        <span>{String(row[field])}</span>
-        {change && <Sparkles size={14} className="text-yellow-500 animate-pulse" />}
-      </div>
-    );
-  };
-
-  const filteredRows = table.paginated.filter((r) =>
-    `${r.No} ${r.NoStok} ${r.Deskripsi} ${r.Batch}`
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
-
   /* ================= UI ================= */
   return (
-    <div
-      ref={topRef}
-      className="bg-white dark:bg-zinc-900 rounded-xl p-5 shadow-lg border space-y-5"
-    >
+    <div className="bg-white dark:bg-zinc-900 rounded-xl p-5 space-y-4 border shadow">
       {/* HEADER */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-  {/* TITLE */}
-  <div className="flex flex-col">
-    <h2 className="text-lg sm:text-xl font-bold">
-      📦 Implant Stock Dashboard
-    </h2>
-    <p className="text-xs text-zinc-500">
-      CRUD • Mutasi • History • KPI Ready
-    </p>
-  </div>
+      <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+        <h2 className="text-xl font-bold">📦 Stock Management</h2>
 
-  {/* ACTION BUTTONS */}
-  <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-    <button
-      onClick={openNew}
-      className="btn-outline flex items-center gap-1 text-xs sm:text-sm"
-    >
-      <Plus size={14} />
-      <span className="hidden sm:inline">Tambah</span>
-    </button>
-
-    <button
-      onClick={handleExport}
-      className="btn-outline flex items-center gap-1 text-xs sm:text-sm"
-    >
-      <FileSpreadsheet size={14} />
-      <span className="hidden sm:inline">Export</span>
-    </button>
-
-    <button
-      onClick={reload}
-      className="btn-outline flex items-center gap-1 text-xs sm:text-sm"
-    >
-      <RefreshCcw size={14} />
-      <span className="hidden sm:inline">Reload</span>
-    </button>
-  </div>
-</div>
-
+        <div className="flex gap-2">
+          <button onClick={reload} className="btn-outline">
+            <RefreshCcw size={14} />
+          </button>
+          <button onClick={handleExport} className="btn-outline">
+            <FileSpreadsheet size={14} />
+          </button>
+          <button
+            onClick={() => {
+              setSelectedRow(null);
+              setEditOpen(true);
+            }}
+            className="btn-outline"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
+      </div>
 
       {/* SEARCH */}
-      <div className="relative w-64">
-        <Search size={16} className="absolute left-2 top-2.5 text-zinc-400" />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search No / Nama / Batch"
-          className="pl-8 pr-3 py-2 border rounded w-full text-sm dark:bg-zinc-800"
-        />
+      <div className="flex flex-col gap-2 md:flex-row md:items-center">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-2 top-2.5 text-zinc-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Scan / Search..."
+            className="pl-8 pr-3 py-2 w-full border rounded text-sm dark:bg-zinc-800"
+          />
+        </div>
+
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as FilterMode)}
+          className="border rounded px-3 py-2 text-sm dark:bg-zinc-800"
+        >
+          <option value="ALL">ALL</option>
+          <option value="REF">REF</option>
+          <option value="LOT">LOT</option>
+          <option value="NAMA">NAMA</option>
+        </select>
+      </div>
+
+      {/* SUMMARY */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+        <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800">
+          <div className="text-zinc-500">Data</div>
+          <div className="font-bold">{summary.count}</div>
+        </div>
+        <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800">
+          <div className="text-zinc-500">Qty</div>
+          <div className="font-bold">{summary.qty}</div>
+        </div>
+        <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800">
+          <div className="text-zinc-500">Terpakai</div>
+          <div className="font-bold text-red-600">{summary.used}</div>
+        </div>
+        <div className="p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800">
+          <div className="text-zinc-500">Refill</div>
+          <div className="font-bold">{summary.refill}</div>
+        </div>
       </div>
 
       {/* ================= DESKTOP TABLE ================= */}
-      <div className="hidden md:block overflow-x-auto border rounded-lg">
-        <table className="min-w-full text-sm">
-          <thead className="bg-zinc-100 dark:bg-zinc-800">
-            <tr>
-              {(
-                [
+      <div className="hidden md:block overflow-x-auto border rounded-xl">
+        <div className="relative overflow-hidden rounded-xl border bg-white dark:bg-zinc-900 shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            {/* ================= HEADER ================= */}
+            <thead className="sticky top-0 z-10 bg-zinc-50 dark:bg-zinc-800 border-b">
+              <tr className="text-xs uppercase tracking-wide text-zinc-500">
+                {[
                   "No",
-                  "NoStok",
+                  "REF",
                   "Deskripsi",
                   "Batch",
                   "Qty",
-                  "TotalQty",
-                  "TERPAKAI",
-                  "REFILL",
-                  "KET",
-                ] as (keyof StockRow)[]
-              ).map((f) => (
-                <th key={f} className="px-4 py-2">
-                  {f}
-                </th>
-              ))}
-              <th className="px-4 py-2 text-center">Aksi</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={10} className="p-6 text-center">
-                  Loading…
-                </td>
+                  "Total",
+                  "Terpakai",
+                  "Refill",
+                  "Keterangan",
+                ].map((h) => (
+                  <th
+                    key={h}
+                    className="px-3 py-2 text-left font-semibold whitespace-nowrap"
+                  >
+                    {h}
+                  </th>
+                ))}
+                <th className="px-3 py-2 text-right">Aksi</th>
               </tr>
-            ) : (
-              filteredRows.map((r, idx) => (
-                <motion.tr
-                key={`row-${r.No ?? "temp"}-${r.NoStok ?? "nostok"}-${r.Batch ?? "batch"}-${idx}`}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}              
-                  className={`border-b ${
-                    changes[r.No] ? "bg-yellow-50" : ""
-                  }`}
-                >
-                  {(Object.keys(r) as (keyof StockRow)[]).map((f) => (
-                    <td key={`${r.No}-${f}`} className="px-4 py-2">
-                      {renderCell(r, f)}
-                    </td>
-                  ))}
+            </thead>
 
-                  <td className="px-4 py-2 flex gap-2 items-center">
-                    <button
-                      onClick={() => {
-                        setHistoryNo(r.No);
-                        setHistoryOpen(true);
-                      }}
-                    >
-                      <NotebookTabs size={16} />
-                    </button>
-
-                    <RowActions
-                      row={r}
-                      sheet={sheet}
-                      onReload={reload}
-                      onEdit={(row) => {
-                        setSelectedRow(row);
-                        setEditOpen(true);
-                      }}
-                    />
+            {/* ================= BODY ================= */}
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={10} className="p-6 text-center text-zinc-400">
+                    Loading data…
                   </td>
-                </motion.tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                </tr>
+              ) : tableData.paginated.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="p-6 text-center text-zinc-400">
+                    Tidak ada data
+                  </td>
+                </tr>
+              ) : (
+                tableData.paginated.map((r: StockRow, i: number) => (
+                  <motion.tr
+                    key={`${r.No}-${i}`}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="
+                border-b last:border-b-0
+                hover:bg-zinc-50 dark:hover:bg-zinc-800
+                transition-colors
+              "
+                  >
+                    {/* No */}
+                    <td className="px-3 py-2 font-medium">{highlight(r.No)}</td>
+
+                    {/* REF */}
+                    <td className="px-3 py-2 text-zinc-600">
+                      {highlight(r.NoStok)}
+                    </td>
+
+                    {/* Deskripsi */}
+                    <td className="px-3 py-2 max-w-[260px] truncate">
+                      {highlight(r.Deskripsi)}
+                    </td>
+
+                    {/* Batch */}
+                    <td className="px-3 py-2 text-zinc-500">
+                      {highlight(r.Batch)}
+                    </td>
+
+                    {/* Qty */}
+                    <td className="px-3 py-2">
+                      <Badge variant="default">{r.Qty}</Badge>
+                    </td>
+
+                    {/* Total */}
+                    <td className="px-3 py-2">
+                      <Badge variant={r.TotalQty <= 0 ? "outline" : "destructive"}>
+                        {r.TotalQty}
+                      </Badge>
+                    </td>
+
+                    {/* Terpakai */}
+                    <td className="px-3 py-2">
+                      <Badge variant="destructive">{r.TERPAKAI}</Badge>
+                    </td>
+
+                    {/* Refill */}
+                    <td className="px-3 py-2">
+                      <Badge variant="secondary">{r.REFILL}</Badge>
+                    </td>
+
+                    {/* Keterangan */}
+                    <td className="px-3 py-2 text-zinc-500 max-w-[200px] truncate">
+                      {r.KET || "-"}
+                    </td>
+
+                    {/* ================= ACTION ================= */}
+                    <td className="px-3 py-2 text-right">
+                      <div className="inline-flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            setHistoryNo(r.No);
+                            setHistoryOpen(true);
+                          }}
+                          className="
+                      p-2 rounded-lg
+                      hover:bg-blue-100 dark:hover:bg-blue-900/30
+                      text-blue-600 dark:text-blue-400
+                      transition
+                    "
+                          title="History"
+                        >
+                          <NotebookTabs size={16} />
+                        </button>
+
+                        <RowActions
+                          row={r}
+                          sheet={sheet}
+                          onReload={reload}
+                          onEdit={(row) => {
+                            setSelectedRow(row);
+                            setEditOpen(true);
+                          }}
+                        />
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
       </div>
 
-      {/* ================= MOBILE VIEW ================= */}
+      {/* ================= MOBILE CARD ================= */}
       <div className="md:hidden space-y-3">
-        {filteredRows.map((r, idx) => (
+        {tableData.paginated.map((r, i) => (
           <motion.div
-          key={`mobile-${r.No ?? "temp"}-${r.NoStok ?? "nostok"}-${idx}`}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-            className="border rounded-lg p-4 space-y-2 shadow-sm"
+            key={i}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="border rounded-xl p-3 shadow-sm bg-white dark:bg-zinc-900"
           >
-            <div className="flex justify-between">
+            <div className="flex justify-between items-start">
               <div>
-                <div className="font-semibold">{r.Deskripsi}</div>
-                <div className="flex items-center gap-1 text-xs text-zinc-500"><Receipt size={14} /> Number Stock: <span className="font-semibold text-blue-700 font-sm">{r.NoStok}</span></div>
+                <div className="font-semibold">{highlight(r.Deskripsi)}</div>
+                <div className="text-xs text-zinc-500">
+                  REF: {highlight(r.NoStok)} • LOT: {highlight(r.Batch)}
+                </div>
               </div>
+              <Badge>{r.Qty}</Badge>
+            </div>
+
+            <div className="flex gap-2 flex-wrap mt-2">
+              <Badge variant="destructive">Total {r.TotalQty}</Badge>
+              <Badge variant="destructive">Used {r.TERPAKAI}</Badge>
+              <Badge variant="secondary">Refill {r.REFILL}</Badge>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-3">
+              <button
+                onClick={() => {
+                  setHistoryNo(r.No);
+                  setHistoryOpen(true);
+                }}
+                className="p-2 rounded-lg bg-blue-100 text-blue-600"
+              >
+                <NotebookTabs size={16} />
+              </button>
 
               <RowActions
                 row={r}
@@ -332,41 +411,23 @@ export default function StockTablePremium({
                 }}
               />
             </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex items-center gap-1"><BatteryIcon size={14} /> Batch: <span className="font-semibold text-red-700">{r.Batch}</span></div>
-              <div className="flex items-center gap-1"><GlassWaterIcon size={14} /> Qty: {r.Qty}</div>
-              <div className="flex items-center gap-1"><LucideGalleryHorizontal size={14} /> <span className="font-semibold text-green-700">Terpakai: {r.TERPAKAI}</span></div>
-              <div className="flex items-center gap-1"><RefreshCcw size={14} /> <span className="font-semibold text-green-700">Refill: {r.REFILL} </span></div>
-            </div>
-
-            <div className="flex justify-between items-center border-t pt-2">
-              <div className="font-bold">Total: {r.TotalQty}</div>
-              <button
-                onClick={() => {
-                  setHistoryNo(r.No);
-                  setHistoryOpen(true);
-                }}
-                className="text-xs border px-2 py-1 rounded"
-              >
-                History
-              </button>
-            </div>
           </motion.div>
         ))}
       </div>
 
       {/* PAGINATION */}
-      <div className="flex justify-center gap-4">
-        <button onClick={() => table.setPage(Math.max(1, table.page - 1))}>
+      <div className="flex justify-center items-center gap-4">
+        <button onClick={() => tableData.setPage(Math.max(1, tableData.page - 1))}>
           <ChevronLeft />
         </button>
-        <span>
-          {table.page} / {table.totalPages}
+        <span className="text-sm">
+          {tableData.page} / {tableData.totalPages}
         </span>
         <button
           onClick={() =>
-            table.setPage(Math.min(table.totalPages, table.page + 1))
+            tableData.setPage(
+              Math.min(tableData.totalPages, tableData.page + 1)
+            )
           }
         >
           <ChevronRight />
@@ -378,7 +439,12 @@ export default function StockTablePremium({
         open={editOpen}
         row={selectedRow}
         onClose={() => setEditOpen(false)}
-        onSave={handleSave}
+        onSave={async (payload) => {
+          if (payload.No) await updateRow(payload);
+          else await createRow(payload);
+          setEditOpen(false);
+          reload();
+        }}
       />
 
       {/* HISTORY MODAL */}

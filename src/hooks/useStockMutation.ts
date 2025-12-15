@@ -1,45 +1,67 @@
 "use client";
 
-import { gasPOST, gasDELETE } from "@/lib/gas";
-import { StockPayload } from "@/types/stock";
+import {
+  gasMutasi,
+  gasDuplicate,
+  gasDelete,
+} from "@/lib/gas";
 
+/**
+ * Hook khusus MUTATION (mutasi, duplicate, delete)
+ * Sesuai arsitektur BARU:
+ * UI → gas.ts → Route Handler → GAS
+ */
 export function useStockMutation(sheet: string) {
+  /* ================= MUTASI IN ================= */
   const mutateIn = async (No: number, qty: number) => {
-    const body: StockPayload = {
+    if (!No || qty <= 0) {
+      throw new Error("Invalid mutateIn payload");
+    }
+
+    return gasMutasi({
       sheet,
-      action: "mutasi",
       No,
       qty,
       type: "in",
-    };
-
-    return gasPOST(body);
+    });
   };
 
+  /* ================= MUTASI OUT ================= */
   const mutateOut = async (No: number, qty: number) => {
-    const body: StockPayload = {
+    if (!No || qty <= 0) {
+      throw new Error("Invalid mutateOut payload");
+    }
+
+    return gasMutasi({
       sheet,
-      action: "mutasi",
       No,
       qty,
       type: "out",
-    };
-
-    return gasPOST(body);
+    });
   };
 
+  /* ================= DUPLICATE ================= */
   const duplicateRow = async (No: number) => {
-    const body: StockPayload = {
-      sheet,
-      action: "duplicate",
-      No,
-    };
+    if (!No) {
+      throw new Error("Invalid No for duplicate");
+    }
 
-    return gasPOST(body);
+    return gasDuplicate({
+      sheet,
+      No,
+    });
   };
 
+  /* ================= DELETE ================= */
   const deleteRow = async (No: number) => {
-    return gasDELETE(sheet, No);
+    if (!No) {
+      throw new Error("Invalid No for delete");
+    }
+
+    return gasDelete({
+      sheet,
+      No,
+    });
   };
 
   return {

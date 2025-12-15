@@ -60,9 +60,9 @@ export default function HistoryModal({
                 by {h.By}
               </div>
 
-              {h.After && (
+              {h.Changes && (
                 <pre className="text-xs bg-zinc-100 dark:bg-zinc-800 p-2 rounded overflow-x-auto">
-{JSON.stringify(JSON.parse(h.After), null, 2)}
+{JSON.stringify(JSON.parse(h.Changes), null, 2)}
                 </pre>
               )}
             </div>

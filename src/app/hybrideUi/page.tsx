@@ -1,6 +1,6 @@
 // app/hybrideUi/page.tsx
 import KpiCards from "@/components/dashboard/KpiCard";
-import StockTablePremium from "@/components/StockTablePremium";
+import StockTablePremium from "@/components/tabel/StockTablePremium";
 
 export default function Page() {
   return (
@@ -10,6 +10,7 @@ export default function Page() {
       <KpiCards sheet="Sheet1" />
 
       <StockTablePremium sheet="Sheet1" />
+
     </main>
   );
 }

@@ -3,7 +3,7 @@ import HistoryTable from "@/components/HistoryTable"
 const History = () => {
   return (
     <div>
-        <HistoryTable   />
+        <HistoryTable  />
     </div>
   )
 }

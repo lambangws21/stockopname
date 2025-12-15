@@ -38,12 +38,12 @@ export default function HistoryTable({
             <td className="px-3 py-2">{h.By}</td>
             <td className="px-3 py-2">
               <pre className="bg-zinc-100 p-2 rounded max-w-xs overflow-auto">
-                {JSON.stringify(JSON.parse(h.Before || "{}"), null, 2)}
+                {JSON.stringify(JSON.parse(h.Changes || "{}"), null, 2)}
               </pre>
             </td>
             <td className="px-3 py-2">
               <pre className="bg-zinc-100 p-2 rounded max-w-xs overflow-auto">
-                {JSON.stringify(JSON.parse(h.After || "{}"), null, 2)}
+                {JSON.stringify(JSON.parse(h.Changes || "{}"), null, 2)}
               </pre>
             </td>
           </tr>

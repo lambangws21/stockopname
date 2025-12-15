@@ -12,25 +12,26 @@ type Props = {
   >;
 };
 
-type DiffItem = {
-  key: string;
-  before: string | number;
-  after: string | number;
+type HistoryChange = {
+  field: string;
+  before: string;
+  after: string;
+};
+
+type HistoryRow = {
+  Timestamp: string;
+  Action: string;
+  Sheet: string;
+  No: number;
+  Changes: string;
+  By: string;
 };
 
 /* ================= HELPERS ================= */
-function parseDiff(beforeRaw: string, afterRaw: string): DiffItem[] {
+function parseChanges(raw: string): HistoryChange[] {
   try {
-    const before = JSON.parse(beforeRaw) as Record<string, unknown>;
-    const after = JSON.parse(afterRaw) as Record<string, unknown>;
-
-    return Object.keys({ ...before, ...after })
-      .filter((k) => before[k] !== after[k])
-      .map((k) => ({
-        key: k,
-        before: before[k] as string | number,
-        after: after[k] as string | number,
-      }));
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -69,7 +70,7 @@ export default function HistoryPanel({ sheet, No, localChanges }: Props) {
       )}
 
       {/* 🌐 SERVER HISTORY */}
-      <div className="border-l-2 border-blue-400 pl-3 space-y-3">
+      <div className="border-l-2 border-blue-400 pl-3 space-y-4">
         {loading && (
           <div className="italic text-zinc-400">Loading history…</div>
         )}
@@ -84,27 +85,35 @@ export default function HistoryPanel({ sheet, No, localChanges }: Props) {
 
         {!loading &&
           !error &&
-          data.map((h) => {
-            const diffs = parseDiff(h.Before, h.After);
-
-            if (diffs.length === 0) return null;
+          (data as HistoryRow[]).map((h) => {
+            const changes = parseChanges(h.Changes);
+            if (changes.length === 0) return null;
 
             return (
               <div key={h.Timestamp} className="space-y-1">
                 <div className="text-[11px] text-zinc-500">
                   <b>{h.Action}</b> •{" "}
                   {new Date(h.Timestamp).toLocaleString()}
+                  {h.By && (
+                    <span className="ml-1 text-zinc-400">
+                      by {h.By}
+                    </span>
+                  )}
                 </div>
 
                 <ul className="space-y-1">
-                  {diffs.map((d) => (
+                  {changes.map((c) => (
                     <li
-                      key={d.key}
+                      key={c.field}
                       className="flex gap-2 items-center"
                     >
-                      <span className="w-28 font-medium">{d.key}</span>
+                      <span className="w-28 font-medium">{c.field}</span>
+                      <span className="line-through text-red-500">
+                        {c.before || "∅"}
+                      </span>
+                      <span className="text-zinc-400">→</span>
                       <span className="font-semibold text-green-600">
-                        {String(d.after)}
+                        {c.after || "∅"}
                       </span>
                     </li>
                   ))}

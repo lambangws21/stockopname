@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useCallback, useState } from "react";
-import { gasGET, gasPOST, gasPUT, gasDELETE } from "@/lib/gas";
-import { StockRow, StockPayload } from "@/types/stock";
+import {
+  gasGET,
+  gasCreate,
+  gasUpdate,
+  gasDelete,
+} from "@/lib/gas";
+import { StockRow } from "@/types/stock";
 
 export function useStockCRUD({ sheet }: { sheet: string }) {
   const [data, setData] = useState<StockRow[]>([]);
@@ -27,36 +32,69 @@ export function useStockCRUD({ sheet }: { sheet: string }) {
 
   useEffect(() => {
     reload();
-  }, [reload]); // ✅ ESLINT FIX
+  }, [reload]);
 
   /* ================= CREATE ================= */
   const createRow = async (row: StockRow) => {
-    const payload: StockPayload = {
+    await gasCreate({
       sheet,
-      action: "create",
-      data: row,
-    };
+      NoStok: row.NoStok,
+      Deskripsi: row.Deskripsi,
+      Batch: row.Batch,
+      Qty: row.Qty,
+      TERPAKAI: row.TERPAKAI,
+      REFILL: row.REFILL,
+      KET: row.KET,
+    });
 
-    await gasPOST(payload);
+    // CREATE wajib reload → ambil No baru dari GAS
     await reload();
   };
 
-  /* ================= UPDATE ================= */
+  /* ================= UPDATE (OPTIMISTIC) ================= */
   const updateRow = async (row: StockRow) => {
-    const payload: StockPayload = {
-      sheet,
-      action: "update",
-      data: row,
-    };
+    if (!row.No || row.No === 0) {
+      throw new Error("Invalid No for update");
+    }
 
-    await gasPUT(payload);
-    await reload();
+    const prev = data;
+
+    // ⚡ optimistic update
+    setData((curr) =>
+      curr.map((r) => (r.No === row.No ? { ...row } : r))
+    );
+
+    try {
+      await gasUpdate({
+        sheet,
+        No: row.No,
+        NoStok: row.NoStok,
+        Deskripsi: row.Deskripsi,
+        Batch: row.Batch,
+        Qty: row.Qty,
+        TERPAKAI: row.TERPAKAI,
+        REFILL: row.REFILL,
+        KET: row.KET,
+      });
+    } catch (err) {
+      // rollback kalau gagal
+      setData(prev);
+      throw err;
+    }
   };
 
-  /* ================= DELETE ================= */
+  /* ================= DELETE (OPTIMISTIC) ================= */
   const deleteRow = async (No: number) => {
-    await gasDELETE(sheet, No);
-    await reload();
+    const prev = data;
+
+    setData((curr) => curr.filter((r) => r.No !== No));
+
+    try {
+      await gasDelete({ sheet, No });
+    } catch (err) {
+      setData(prev);
+      throw err;
+    }
   };
 
   return {

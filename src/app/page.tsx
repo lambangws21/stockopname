@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import KpiCards from "@/components/dashboard/KpiCard";
+// import KpiCards from "@/components/dashboard/KpiCard";
 import StockTablePremium from "@/components/StockTablePremium";
 import { SwatchBookIcon } from "lucide-react";
 
@@ -18,7 +18,7 @@ export default function Page() {
 
       {/* KPI SECTION */}
       <Suspense fallback={<KpiSkeleton />}>
-        <KpiCards sheet="Sheet1" />
+        {/* <KpiCards sheet="Sheet1" /> */}
       </Suspense>
 
       {/* TABLE SECTION */}

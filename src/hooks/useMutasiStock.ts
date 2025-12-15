@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { StockRow, StockPayload } from "@/types/stock";
-import { gasPOST } from "@/lib/gas";
+import { StockRow } from "@/types/stock";
+import { gasMutasi } from "@/lib/gas";
 
 interface MutasiOptions {
   sheet: string;
@@ -19,7 +19,7 @@ export interface UseMutasiStockResult {
 }
 
 /* -------------------------------------------------------
-   useMutasiStock — MUTASI IN / OUT
+   useMutasiStock — MUTASI IN / OUT (FINAL)
 ------------------------------------------------------- */
 export function useMutasiStock({
   sheet,
@@ -35,22 +35,21 @@ export function useMutasiStock({
       setError(null);
       setSuccess(false);
 
-      if (qty <= 0) throw new Error("Qty harus lebih besar dari 0");
+      if (qty <= 0) {
+        throw new Error("Qty harus lebih besar dari 0");
+      }
 
       if (type === "out" && qty > row.Qty) {
         throw new Error("Qty OUT tidak boleh melebihi stok tersedia");
       }
 
-      // ✅ PAYLOAD BENAR (TANPA mutation)
-      const body: StockPayload = {
+      await gasMutasi({
         sheet,
-        action: "mutasi",
         No: row.No,
         qty,
         type,
-      };
+      });
 
-      await gasPOST(body);
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

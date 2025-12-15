@@ -1,60 +1,45 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { gasKPI } from "@/lib/gas";
+import { useEffect, useState } from "react";
 
-/* ================= TYPES ================= */
-export interface StockKPI {
+export type StockKPI = {
   totalItems: number;
   lowStock: number;
   sumStock: number;
-}
+};
 
-/* ================= HOOK ================= */
 export function useStockKPI(sheet: string) {
   const [data, setData] = useState<StockKPI | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  /* 🔄 SAFE FETCH (async external event) */
-  const fetchKPI = useCallback(async () => {
-    setLoading(true);
-
-    const res = await gasKPI(sheet);
-    if (res?.kpi) {
-      setData(res.kpi as StockKPI);
-    }
-
-    setLoading(false);
-  }, [sheet]);
-
-  /* 🚀 INITIAL + INTERVAL (ESLINT SAFE) */
   useEffect(() => {
-    const timer = setTimeout(fetchKPI, 0); // ✅ FIX ESLINT
+    if (!sheet) return;
 
-    const interval = setInterval(fetchKPI, 90000); // 1 menit
+    let active = true;
+
+    fetch(`/api/super-sheet?action=kpi&sheet=${sheet}`, {
+      cache: "no-store",
+    })
+      .then((r) => r.json())
+      .then((res) => {
+        console.log("📊 KPI RAW RESPONSE:", res); // ✅ LOG DI SINI
+
+        if (!active) return;
+
+        setData(res?.kpi ?? null);
+      })
+      .catch((err) => {
+        console.error("❌ KPI ERROR:", err); // optional
+        if (!active) return;
+        setData(null);
+      });
 
     return () => {
-      clearTimeout(timer);
-      clearInterval(interval);
+      active = false;
     };
-  }, [fetchKPI]);
-
-  /* ⚡ OPTIMISTIC HELPERS */
-  const optimisticAdd = () =>
-    setData((p) =>
-      p ? { ...p, totalItems: p.totalItems + 1 } : p
-    );
-
-  const optimisticRemove = () =>
-    setData((p) =>
-      p ? { ...p, totalItems: Math.max(0, p.totalItems - 1) } : p
-    );
+  }, [sheet]);
 
   return {
     data,
-    loading,
-    refresh: fetchKPI,
-    optimisticAdd,
-    optimisticRemove,
+    loading: data === null,
   };
 }
