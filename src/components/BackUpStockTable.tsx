@@ -24,7 +24,6 @@ import { useStockTable } from "@/hooks/useStockTable";
 import EditModal from "./EditModal";
 import RowActions from "./RowActions";
 import HistoryTimelineModal from "./HistoryModalTimeline";
-import QuickSearch from "./QuickSearch";
 
 /* ================= TYPES ================= */
 type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
@@ -193,13 +192,13 @@ export default function StockTablePremium({
       </div>
 
       {/* SEARCH */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:mb-9">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center">
         <div className="relative flex-1">
           <Search size={16} className="absolute left-2 top-2.5 text-zinc-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="CTRL+K to focus data"
+            placeholder="Scan / Search..."
             className="pl-8 pr-3 py-2 w-full border rounded text-sm dark:bg-zinc-800"
           />
         </div>
@@ -215,14 +214,6 @@ export default function StockTablePremium({
           <option value="NAMA">NAMA</option>
         </select>
       </div>
-      <QuickSearch
-        data={data}
-        onSelect={(row) => {
-          setSelectedRow(row);
-          setEditOpen(true);
-          setIsCreate(false);
-        }}
-      />
 
       {/* SUMMARY */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm md:mb-16">
@@ -355,9 +346,7 @@ export default function StockTablePremium({
 
                       {/* Terpakai */}
                       <td className="px-3 py-2">
-                        <Badge className="animate-warning text-slate-800">
-                          {r.TERPAKAI}
-                        </Badge>
+                        <Badge className="animate-warning text-slate-800">{r.TERPAKAI}</Badge>
                       </td>
 
                       {/* Refill */}

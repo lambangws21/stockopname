@@ -121,3 +121,231 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  /* ======================
+     SHAKE (SOFT)
+  ====================== */
+  @keyframes shake-soft {
+    0%, 100% {
+      transform: translateX(0);
+    }
+    25% {
+      transform: translateX(-2px);
+    }
+    50% {
+      transform: translateX(2px);
+    }
+    75% {
+      transform: translateX(-1px);
+    }
+  }
+
+  .animate-shake {
+    animation: shake-soft 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .animate-shake-infinite {
+    animation: shake-soft 1.2s ease-in-out infinite;
+  }
+
+  /* ======================
+     INVALID (SHAKE + RED GLOW)
+  ====================== */
+  @keyframes invalid-glow {
+    0% {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35);
+    }
+    100% {
+      box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);
+    }
+  }
+
+  .animate-invalid {
+    animation:
+      shake-soft 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+      invalid-glow 0.6s ease-out;
+    border-color: rgb(239 68 68);
+  }
+
+  /* ======================
+     WARNING (YELLOW PULSE)
+  ====================== */
+  @keyframes warning-pulse {
+    0%, 100% {
+      background-color: rgba(234, 179, 8, 0.12);
+    }
+    50% {
+      background-color: rgba(234, 179, 8, 0.22);
+    }
+  }
+
+  .animate-warning {
+    animation: warning-pulse 1.9s ease-in-out infinite;
+  }
+
+  /* ======================
+     SUCCESS (GREEN POP)
+  ====================== */
+  @keyframes success-pop {
+    0% {
+      transform: scale(0.96);
+      background-color: rgba(34, 197, 94, 0.12);
+    }
+    60% {
+      transform: scale(1.02);
+      background-color: rgba(34, 197, 94, 0.22);
+    }
+    100% {
+      transform: scale(1);
+      background-color: transparent;
+    }
+  }
+
+  .animate-success {
+    animation: success-pop 0.45s ease-out;
+  }
+
+  /* ======================
+     INFO / FOCUS (BLUE GLOW)
+  ====================== */
+  @keyframes info-glow {
+    0% {
+      box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35);
+    }
+    100% {
+      box-shadow: 0 0 0 6px rgba(59, 130, 246, 0);
+    }
+  }
+
+  .animate-info {
+    animation: info-glow 0.6s ease-out;
+  }
+}
+
+
+
+
+@layer utilities {
+  /* ======================
+     FLAME FLICKER
+  ====================== */
+  @keyframes flame-flicker {
+    0% {
+      transform: translateY(0) scale(1);
+      opacity: 0.85;
+    }
+    30% {
+      transform: translateY(-2px) scale(1.05);
+      opacity: 1;
+    }
+    60% {
+      transform: translateY(1px) scale(0.98);
+      opacity: 0.9;
+    }
+    100% {
+      transform: translateY(0) scale(1);
+      opacity: 0.85;
+    }
+  }
+  /* ======================
+     FLAME ICON (NO GLOW)
+  ====================== */
+  @keyframes flame-icon {
+    0% {
+      transform: scale(1);
+      opacity: 0.85;
+    }
+    40% {
+      transform: scale(1.08);
+      opacity: 1;
+    }
+    70% {
+      transform: scale(0.98);
+      opacity: 0.9;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 0.85;
+    }
+  }
+
+  .animate-flame-icon {
+    animation: flame-icon 1.2s ease-in-out infinite;
+  }
+}
+
+  /* ======================
+     FLAME GLOW
+  ====================== */
+  @keyframes flame-glow {
+    0% {
+      box-shadow:
+        0 0 0 rgba(251, 146, 60, 0),
+        0 0 8px rgba(251, 146, 60, 0.4),
+        0 0 16px rgba(249, 115, 22, 0.3);
+    }
+    50% {
+      box-shadow:
+        0 0 6px rgba(251, 146, 60, 0.6),
+        0 0 16px rgba(249, 115, 22, 0.6),
+        0 0 32px rgba(234, 88, 12, 0.45);
+    }
+    100% {
+      box-shadow:
+        0 0 0 rgba(251, 146, 60, 0),
+        0 0 8px rgba(251, 146, 60, 0.4),
+        0 0 16px rgba(249, 115, 22, 0.3);
+    }
+  }
+
+  /* ======================
+     FLAME FLOAT (NAIK HALUS)
+  ====================== */
+  @keyframes flame-float {
+    0% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-3px);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  /* ======================
+     FLAME UTILITY
+  ====================== */
+  .animate-flame {
+    animation:
+      flame-flicker 0.9s ease-in-out infinite,
+      flame-glow 1.4s ease-in-out infinite,
+      flame-float 2.4s ease-in-out infinite;
+  }
+
+  @layer utilities {
+    @keyframes box-open {
+      0% {
+        opacity: 0;
+        transform: scale(0.95) translateY(-6px);
+      }
+      60% {
+        opacity: 1;
+        transform: scale(1.02) translateY(0);
+      }
+      100% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+      }
+    }
+  
+    .animate-box-open {
+      animation: box-open 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: top right;
+      will-change: transform, opacity;
+    }
+  }
+  
+  
+

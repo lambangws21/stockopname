@@ -22,10 +22,9 @@ export default function KPIBar({ sheet }: { sheet: string }) {
       try {
         setLoading(true);
 
-        const res = await fetch(
-          `/api/super-sheet?action=kpi&sheet=${sheet}`,
-          { cache: "no-store" }
-        );
+        const res = await fetch(`/api/super-sheet?action=kpi&sheet=${sheet}`, {
+          cache: "no-store",
+        });
 
         const json = await res.json();
 
@@ -113,6 +112,11 @@ export default function KPIBar({ sheet }: { sheet: string }) {
           <div>
             <p className="text-xs text-zinc-500">{kpi.label}</p>
             <p className="text-2xl font-bold">{kpi.value}</p>
+          </div>
+          <div className="mt-10 flex justify-center">
+            <div className="animate-shake bg-red-500 text-white px-6 py-3 rounded">
+              SHAKE TEST
+            </div>
           </div>
         </motion.div>
       ))}

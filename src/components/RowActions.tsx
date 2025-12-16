@@ -53,7 +53,7 @@ export default function RowActions({
       {/* DROPDOWN MENU */}
       {menuOpen && (
         <div
-          className="absolute right-0 mt-2 bg-white dark:bg-zinc-900 border dark:border-zinc-700 shadow-lg rounded-lg w-44 z-40"
+          className="absolute right-6 -top-10 bg-white dark:bg-zinc-900 border dark:border-zinc-700 shadow-lg rounded-lg w-44 z-40"
           onMouseLeave={() => setMenuOpen(false)}
         >
           {/* DETAIL */}

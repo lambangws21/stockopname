@@ -1,6 +1,6 @@
 // app/hybrideUi/page.tsx
 import KpiCards from "@/components/dashboard/KpiCard";
-import StockTablePremium from "@/components/tabel/StockTablePremium";
+import StockTablePremium from "@/components/TableDesktop";
 
 export default function Page() {
   return (
