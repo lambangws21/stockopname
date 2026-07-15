@@ -14,10 +14,12 @@ import {
 import MutateModal from "./MutateModal";
 import DuplicateModal from "./DuplicateModal";
 import DeleteConfirmModal from "./DeleteConfirm";
+import type { GasSheetContext } from "@/lib/gas";
 
 export interface RowActionsProps {
   row: StockRow;
   sheet: string;
+  context?: GasSheetContext;
   onEdit: (row: StockRow) => void;
   onReload: () => Promise<void>;
 
@@ -28,6 +30,7 @@ export interface RowActionsProps {
 export default function RowActions({
   row,
   sheet,
+  context,
   onEdit,
   onReload,
   onDetail,
@@ -121,6 +124,7 @@ export default function RowActions({
       <MutateModal
         open={mutateOpen}
         sheet={sheet}
+        context={context}
         row={row}
         onClose={() => setMutateOpen(false)}
         onSuccess={onReload}
@@ -130,6 +134,7 @@ export default function RowActions({
       <DuplicateModal
         open={duplicateOpen}
         sheet={sheet}
+        context={context}
         row={row}
         onClose={() => setDuplicateOpen(false)}
         onSuccess={onReload}
@@ -139,6 +144,7 @@ export default function RowActions({
       <DeleteConfirmModal
         open={deleteOpen}
         sheet={sheet}
+        context={context}
         row={row}
         onClose={() => setDeleteOpen(false)}
         onSuccess={onReload}

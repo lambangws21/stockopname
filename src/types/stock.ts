@@ -127,6 +127,10 @@ export interface GasResponse<T> {
 export interface BasePayload {
   sheet: string;
   by?: string;
+  sourceUrl?: string;
+  sourceId?: string;
+  sourceSheet?: string;
+  sourceGid?: string;
 }
 
 /* ================= CREATE ================= */

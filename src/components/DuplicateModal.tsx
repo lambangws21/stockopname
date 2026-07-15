@@ -3,11 +3,13 @@
 import { StockRow } from "@/types/stock";
 import { useState } from "react";
 import { useStockMutation } from "@/hooks/useStockMutation";
+import type { GasSheetContext } from "@/lib/gas";
 
 interface DuplicateModalProps {
   open: boolean;
   row: StockRow | null;
   sheet: string;
+  context?: GasSheetContext;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -16,10 +18,11 @@ export default function DuplicateModal({
   open,
   row,
   sheet,
+  context,
   onClose,
   onSuccess,
 }: DuplicateModalProps) {
-  const { duplicateRow } = useStockMutation(sheet);
+  const { duplicateRow } = useStockMutation(sheet, context);
 
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);

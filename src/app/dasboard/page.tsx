@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { SheetTable } from "@/components/sheet/sheetTable";
 import { SheetFormModal } from "@/components/sheet/sheetFormModal";
 import { SheetDeleteModal } from "@/components/sheet/sheetDeleteModal";
 import { useSheetStore } from "@/components/sheet/useSheetStore";

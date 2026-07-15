@@ -52,6 +52,7 @@ export default function StockTablePremium({
   });
 
   const [editOpen, setEditOpen] = useState(false);
+  const  [open, setOpen] = useState((false));
   const [selectedRow, setSelectedRow] = useState<StockRow | null>(null);
 
   const [search, setSearch] = useState("");
@@ -199,9 +200,15 @@ export default function StockTablePremium({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="CTRL+K to focus data"
+            placeholder="⌘+K Quick Search"
             className="pl-8 pr-3 py-2 w-full border rounded text-sm dark:bg-zinc-800"
           />
+             <button
+
+        className="px-3 py-2 rounded border"
+      >
+        ctrl/⌘+K Quick Search
+      </button>
         </div>
 
         <select
@@ -216,6 +223,8 @@ export default function StockTablePremium({
         </select>
       </div>
       <QuickSearch
+      open={open}
+      onClose={() => setOpen(false)}
         data={data}
         onSelect={(row) => {
           setSelectedRow(row);

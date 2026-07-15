@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import ExcelJS from "exceljs";
 import {
@@ -25,9 +25,45 @@ import EditModal from "./EditModal";
 import RowActions from "./RowActions";
 import HistoryTimelineModal from "./HistoryModalTimeline";
 import QuickSearch from "./QuickSearch";
+import type { GasSheetContext } from "@/lib/gas";
+import { toast } from "sonner";
 
 /* ================= TYPES ================= */
 type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
+type ExternalScanPayload = {
+  ref: string;
+  lot?: string;
+  exp?: string;
+  raw?: string;
+};
+
+function toSafeNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+
+    const normalized = trimmed
+      .replace(/\s+/g, "")
+      .replace(/\.(?=\d{3}(?:\D|$))/g, "")
+      .replace(/,(?=\d{3}(?:\D|$))/g, "")
+      .replace(",", ".")
+      .replace(/[^0-9.-]/g, "");
+
+    if (!normalized || normalized === "-" || normalized === "." || normalized === "-.") {
+      return 0;
+    }
+
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 /* ================= DEBOUNCE ================= */
 function useDebounce<T>(value: T, delay = 300) {
@@ -44,11 +80,24 @@ function useDebounce<T>(value: T, delay = 300) {
 /* ================= COMPONENT ================= */
 export default function StockTablePremium({
   sheet = "Sheet1",
+  externalScan,
+  context,
+  title = "📦 Stock Management",
 }: {
   sheet?: string;
+  externalScan?: ExternalScanPayload | null;
+  context?: GasSheetContext;
+  title?: string;
 }) {
+  const handleRemoteChange = useCallback(() => {
+    toast.info("Data diperbarui oleh user lain. Tabel disegarkan otomatis.");
+  }, []);
+
   const { data, loading, reload, createRow, updateRow } = useStockCRUD({
     sheet,
+    context,
+    pollIntervalMs: 12000,
+    onRemoteChange: handleRemoteChange,
   });
 
   const [editOpen, setEditOpen] = useState(false);
@@ -63,6 +112,9 @@ export default function StockTablePremium({
   const [historyNo, setHistoryNo] = useState<number | null>(null);
 
   const debounced = useDebounce(search, 350);
+  const scannedRef = String(externalScan?.ref ?? "").trim();
+  const activeSearch = scannedRef || debounced;
+  const activeMode: FilterMode = scannedRef ? "REF" : mode;
 
   /* ================= AUTO BARCODE ================= */
   useEffect(() => {
@@ -77,8 +129,8 @@ export default function StockTablePremium({
 
   /* ================= FILTER ================= */
   const filteredData = useMemo(() => {
-    if (!debounced) return data;
-    const q = debounced.toLowerCase();
+    if (!activeSearch) return data;
+    const q = activeSearch.toLowerCase();
 
     return data.filter((r) => {
       const ref = String(r.NoStok ?? "").toLowerCase();
@@ -86,15 +138,15 @@ export default function StockTablePremium({
       const nama = String(r.Deskripsi ?? "").toLowerCase();
       const no = String(r.No ?? "").toLowerCase();
 
-      if (mode === "REF") return ref.includes(q);
-      if (mode === "LOT") return lot.includes(q);
-      if (mode === "NAMA") return nama.includes(q);
+      if (activeMode === "REF") return ref.includes(q);
+      if (activeMode === "LOT") return lot.includes(q);
+      if (activeMode === "NAMA") return nama.includes(q);
 
       return (
         ref.includes(q) || lot.includes(q) || nama.includes(q) || no.includes(q)
       );
     });
-  }, [data, debounced, mode]);
+  }, [data, activeSearch, activeMode]);
 
   const tableData = useStockTable(filteredData);
 
@@ -103,9 +155,9 @@ export default function StockTablePremium({
     return filteredData.reduce(
       (acc, r) => {
         acc.count += 1;
-        acc.qty += Number(r.Qty || 0);
-        acc.used += Number(r.TERPAKAI || 0);
-        acc.refill += Number(r.REFILL || 0);
+        acc.qty += toSafeNumber(r.Qty);
+        acc.used += toSafeNumber(r.TERPAKAI);
+        acc.refill += toSafeNumber(r.REFILL);
         return acc;
       },
       { count: 0, qty: 0, used: 0, refill: 0 }
@@ -170,7 +222,7 @@ export default function StockTablePremium({
     <div className="bg-white dark:bg-zinc-900 rounded-xl p-5 space-y-4 border shadow">
       {/* HEADER */}
       <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
-        <h2 className="text-xl font-bold">📦 Stock Management</h2>
+        <h2 className="text-xl font-bold">{title}</h2>
 
         <div className="flex gap-2">
           <button onClick={reload} className="btn-outline">
@@ -197,7 +249,7 @@ export default function StockTablePremium({
         <div className="relative flex-1">
           <Search size={16} className="absolute left-2 top-2.5 text-zinc-400" />
           <input
-            value={search}
+            value={scannedRef || search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="CTRL+K to focus data"
             className="pl-8 pr-3 py-2 w-full border rounded text-sm dark:bg-zinc-800"
@@ -205,7 +257,7 @@ export default function StockTablePremium({
         </div>
 
         <select
-          value={mode}
+          value={scannedRef ? "REF" : mode}
           onChange={(e) => setMode(e.target.value as FilterMode)}
           className="border rounded px-3 py-2 text-sm dark:bg-zinc-800"
         >
@@ -217,6 +269,8 @@ export default function StockTablePremium({
       </div>
       <QuickSearch
         data={data}
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
         onSelect={(row) => {
           setSelectedRow(row);
           setEditOpen(true);
@@ -392,6 +446,7 @@ export default function StockTablePremium({
                           <RowActions
                             row={r}
                             sheet={sheet}
+                            context={context}
                             onReload={reload}
                             onEdit={(row) => {
                               setIsCreate(false);
@@ -449,6 +504,7 @@ export default function StockTablePremium({
               <RowActions
                 row={r}
                 sheet={sheet}
+                context={context}
                 onReload={reload}
                 onEdit={(row) => {
                   setSelectedRow(row);

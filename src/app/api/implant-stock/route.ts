@@ -1,10 +1,27 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import admin from "@/lib/firebase/admin";
 import {
   ImplantStockItem,
   ImplantedFirestoreStock,
+  StockAction,
 } from "@/types/implant-stock";
+
+interface CreateStockPayload {
+  stockNo?: string;
+  description?: string;
+  batch?: string;
+  qty?: number;
+  refill?: number;
+  used?: number;
+  note?: string;
+}
+
+function toSafeNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 export async function GET() {
   try {
@@ -41,5 +58,89 @@ export async function GET() {
   } catch (error) {
     console.error("GET implantStocks error:", error);
     return NextResponse.json({ data: [] }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = (await request.json()) as CreateStockPayload;
+
+    const stockNo = String(body.stockNo ?? "").trim();
+    const description = String(body.description ?? "").trim();
+
+    if (!stockNo) {
+      return NextResponse.json(
+        { error: "No stok wajib diisi" },
+        { status: 400 }
+      );
+    }
+
+    if (!description) {
+      return NextResponse.json(
+        { error: "Deskripsi wajib diisi" },
+        { status: 400 }
+      );
+    }
+
+    const qty = toSafeNumber(body.qty);
+    const refill = toSafeNumber(body.refill);
+    const used = toSafeNumber(body.used);
+    const totalQty = qty + refill - used;
+
+    const firestore = admin.firestore();
+    const stocksRef = firestore.collection("implantStocks");
+
+    const lastNoSnapshot = await stocksRef.orderBy("no", "desc").limit(1).get();
+    const nextNo = lastNoSnapshot.empty
+      ? 1
+      : toSafeNumber(lastNoSnapshot.docs[0].data().no, 0) + 1;
+
+    const now = new Date();
+    const stockData: ImplantedFirestoreStock = {
+      no: nextNo,
+      noStok: stockNo,
+      deskripsi: description,
+      batch: String(body.batch ?? "").trim(),
+      qty,
+      refill,
+      terpakai: used,
+      totalQty,
+      keterangan: String(body.note ?? "").trim(),
+      isDeleted: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const stockRef = stocksRef.doc();
+    const logRef = firestore.collection("implantStockLogs").doc();
+    const batch = firestore.batch();
+
+    batch.set(stockRef, stockData);
+    batch.set(logRef, {
+      stockId: stockRef.id,
+      action: "CREATE" as StockAction,
+      before: null,
+      after: stockData,
+      changedAt: now,
+      source: "qr-scan",
+    });
+
+    await batch.commit();
+
+    return NextResponse.json(
+      {
+        id: stockRef.id,
+        no: nextNo,
+        totalQty,
+        message: "Stok implant berhasil ditambahkan",
+      },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error("POST implantStocks error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal Server Error" },
+      { status: 500 }
+    );
   }
 }

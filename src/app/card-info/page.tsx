@@ -1,10 +1,12 @@
 "use client";
+// import Navbar from "@/components/dashboard/Navbar";
 import { Button } from "@/components/ui/button";
 import  { useState } from "react";
 
 export default function ShakeTest() {
   const [open, setOpen] = useState(false);
   const [animKey, setAnimKey] = useState(0);
+
   
   const toggle = () => {
     setOpen((v) => !v);
@@ -14,6 +16,7 @@ export default function ShakeTest() {
 
   return (
     <div className="flex justify-center mt-20">
+      {/* <Navbar onOpenSearch={() => setQuickSearchOpen(true)} /> */}
       <div className="animate-shake-infinite bg-red-600 text-white px-8 py-4 text-lg rounded-xl">
         ⚠️ ERROR SHAKE
       </div>

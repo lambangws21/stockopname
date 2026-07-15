@@ -10,6 +10,13 @@ interface Props {
   onSelect: (row: StockRow) => void;
 }
 
+interface Props {
+    open: boolean;
+    onClose: () => void;
+    onSelect: (row: StockRow) => void;
+  }
+
+
 const RECENT_KEY = "quick-search-recent";
 
 /* ================= HELPERS ================= */

@@ -4,6 +4,7 @@ import {
   gasMutasi,
   gasDuplicate,
   gasDelete,
+  GasSheetContext,
 } from "@/lib/gas";
 
 /**
@@ -11,7 +12,10 @@ import {
  * Sesuai arsitektur BARU:
  * UI → gas.ts → Route Handler → GAS
  */
-export function useStockMutation(sheet: string) {
+export function useStockMutation(
+  sheet: string,
+  context?: GasSheetContext
+) {
   /* ================= MUTASI IN ================= */
   const mutateIn = async (No: number, qty: number) => {
     if (!No || qty <= 0) {
@@ -20,6 +24,7 @@ export function useStockMutation(sheet: string) {
 
     return gasMutasi({
       sheet,
+      ...context,
       No,
       qty,
       type: "in",
@@ -34,6 +39,7 @@ export function useStockMutation(sheet: string) {
 
     return gasMutasi({
       sheet,
+      ...context,
       No,
       qty,
       type: "out",
@@ -48,6 +54,7 @@ export function useStockMutation(sheet: string) {
 
     return gasDuplicate({
       sheet,
+      ...context,
       No,
     });
   };
@@ -60,6 +67,7 @@ export function useStockMutation(sheet: string) {
 
     return gasDelete({
       sheet,
+      ...context,
       No,
     });
   };

@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useStockMutation } from "@/hooks/useStockMutation";
 import { StockRow } from "@/types/stock";
+import type { GasSheetContext } from "@/lib/gas";
 
 interface DeleteConfirmModalProps {
   open: boolean;
   row: StockRow | null;
   sheet: string;
+  context?: GasSheetContext;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -16,10 +18,11 @@ export default function DeleteConfirmModal({
   open,
   row,
   sheet,
+  context,
   onClose,
   onSuccess,
 }: DeleteConfirmModalProps) {
-  const { deleteRow } = useStockMutation(sheet);
+  const { deleteRow } = useStockMutation(sheet, context);
 
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);

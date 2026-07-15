@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { StockRow } from "@/types/stock";
 import { useStockMutation } from "@/hooks/useStockMutation";
+import type { GasSheetContext } from "@/lib/gas";
 
 interface MutateModalProps {
   open: boolean;
   row: StockRow | null;
   sheet: string;
+  context?: GasSheetContext;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -16,10 +18,11 @@ export default function MutateModal({
   open,
   row,
   sheet,
+  context,
   onClose,
   onSuccess,
 }: MutateModalProps) {
-  const { mutateIn, mutateOut } = useStockMutation(sheet);
+  const { mutateIn, mutateOut } = useStockMutation(sheet, context);
 
   const [qty, setQty] = useState<number>(0);
   const [type, setType] = useState<"in" | "out">("in");

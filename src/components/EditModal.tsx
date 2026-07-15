@@ -10,6 +10,41 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 
+function toSafeNumber(value: unknown): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/\.(?=\d{3}(?:\D|$))/g, "")
+      .replace(/,(?=\d{3}(?:\D|$))/g, "")
+      .replace(",", ".");
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeRow(row: StockRow | null): StockRow {
+  const source = row || EMPTY_ROW;
+  return {
+    No: toSafeNumber(source.No),
+    NoStok: String(source.NoStok ?? ""),
+    Deskripsi: String(source.Deskripsi ?? ""),
+    Batch: String(source.Batch ?? ""),
+    Qty: toSafeNumber(source.Qty),
+    TotalQty: toSafeNumber(source.TotalQty),
+    TERPAKAI: toSafeNumber(source.TERPAKAI),
+    REFILL: toSafeNumber(source.REFILL),
+    KET: String(source.KET ?? ""),
+  };
+}
+
 /* ================= TYPES ================= */
 type Props = {
   open: boolean;
@@ -65,20 +100,20 @@ function ModalContent({
 }) {
   const isCreate = !row || row.No === 0;
 
-  const [form, setForm] = useState<StockRow>(row ? { ...row } : EMPTY_ROW);
+  const [form, setForm] = useState<StockRow>(normalizeRow(row));
   const [step, setStep] = useState<"edit" | "approve">("edit");
   const [saving, setSaving] = useState(false);
   const [shake, setShake] = useState(false);
 
   /* ================= AUTO CALC ================= */
   const calculatedTotalQty =
-    Number(form.Qty || 0) +
-    Number(form.REFILL || 0) -
-    Number(form.TERPAKAI || 0);
+    toSafeNumber(form.Qty) +
+    toSafeNumber(form.REFILL) -
+    toSafeNumber(form.TERPAKAI);
 
   useEffect(() => {
     if (form.TotalQty !== calculatedTotalQty) {
-      setForm((f) => ({ ...f, TotalQty: calculatedTotalQty }));
+      setForm((f) => ({ ...f, TotalQty: toSafeNumber(calculatedTotalQty) }));
     }
   }, [calculatedTotalQty, form.TotalQty]);
 
@@ -204,7 +239,7 @@ function ModalContent({
 
               <div className="space-y-1">
                 <Label>Total Qty (Auto)</Label>
-                <Input value={form.TotalQty} disabled />
+                <Input value={toSafeNumber(form.TotalQty)} disabled />
               </div>
             </div>
 
@@ -308,8 +343,8 @@ function NumberField({
       <Label>{label}</Label>
       <Input
         type="number"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        value={toSafeNumber(value)}
+        onChange={(e) => onChange(toSafeNumber(e.target.value))}
       />
     </div>
   );
