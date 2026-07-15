@@ -42,6 +42,9 @@ const CUSTOMER_HEADERS = [
   "PracticeHospital3",
   "PhotoUrl",
   "PhotoFileId",
+  "ImplantUsed",
+  "ProcedureType",
+  "UsageHospital",
 ];
 
 const MASTER_HEADERS = [
@@ -796,6 +799,9 @@ function customerObjectForClient(item) {
     practiceHospital3: normalizeCustomerValue(item.PracticeHospital3),
     photoUrl: normalizeCustomerValue(item.PhotoUrl),
     photoFileId: normalizeCustomerValue(item.PhotoFileId),
+    implantUsed: normalizeCustomerValue(item.ImplantUsed),
+    procedureType: normalizeCustomerValue(item.ProcedureType),
+    usageHospital: normalizeCustomerValue(item.UsageHospital),
   };
 }
 
@@ -844,6 +850,9 @@ function customerRowFromPayload(payload, previous) {
     hasOwn(input, "practiceHospital3") ? normalizeCustomerValue(input.practiceHospital3) : normalizeCustomerValue(old.PracticeHospital3),
     hasOwn(input, "photoUrl") ? normalizeCustomerValue(input.photoUrl) : normalizeCustomerValue(old.PhotoUrl),
     hasOwn(input, "photoFileId") ? normalizeCustomerValue(input.photoFileId) : normalizeCustomerValue(old.PhotoFileId),
+    hasOwn(input, "implantUsed") ? normalizeCustomerValue(input.implantUsed) : normalizeCustomerValue(old.ImplantUsed),
+    hasOwn(input, "procedureType") ? normalizeCustomerValue(input.procedureType) : normalizeCustomerValue(old.ProcedureType),
+    hasOwn(input, "usageHospital") ? normalizeCustomerValue(input.usageHospital) : normalizeCustomerValue(old.UsageHospital),
   ];
 }
 
@@ -1186,12 +1195,18 @@ function advanceCustomerJourney(payload) {
 
     const owner = normalizeCustomerValue(payload.owner || before.Owner);
     const product = normalizeCustomerValue(payload.productOffered || before.ProductOffered);
+    const usageHospital = normalizeCustomerValue(payload.usageHospital || before.UsageHospital || before.Hospital);
+    const implantUsed = normalizeCustomerValue(payload.implantUsed || before.ImplantUsed || product);
+    const procedureType = normalizeCustomerValue(payload.procedureType || before.ProcedureType);
     const missing = [];
     if (!normalizeCustomerValue(before.Territory)) missing.push("Territory");
     if (!normalizeCustomerValue(before.Hospital)) missing.push("Hospital");
     if (!normalizeCustomerValue(before.Doctor)) missing.push("Doctor");
     if (!owner) missing.push("Owner / Sales PIC");
     if (stageOrder[nextStage] >= stageOrder.OFFERED && !product) missing.push("Product Offered");
+    if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !usageHospital) missing.push("Rumah sakit tindakan");
+    if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !implantUsed) missing.push("Implant yang digunakan");
+    if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !procedureType) missing.push("Jenis tindakan");
     if (missing.length) {
       return { status: "error", code: "CUSTOMER_INCOMPLETE", message: "Lengkapi data: " + missing.join(", "), missing: missing };
     }
@@ -1217,6 +1232,11 @@ function advanceCustomerJourney(payload) {
     }
     if (hasOwn(payload, "nextFollowUp")) next[22] = payload.nextFollowUp || "";
     if (hasOwn(payload, "outcome")) next[23] = normalizeCustomerValue(payload.outcome);
+    if (stageOrder[nextStage] >= stageOrder.FIRST_USE) {
+      next[30] = implantUsed;
+      next[31] = procedureType;
+      next[32] = usageHospital;
+    }
 
     sheet.getRange(index + 1, 1, 1, CUSTOMER_HEADERS.length).setValues([next]);
     const after = customerArrayToObject(next);
@@ -1241,7 +1261,7 @@ function doGet(e) {
       return cors({
         status: "success",
         module: "CustomerMapping",
-        version: 5,
+        version: 7,
         actions: ["customerList", "customerBulkImport", "customerDecision", "customerUpsert", "customerDelete", "customerJourney"],
       });
     }

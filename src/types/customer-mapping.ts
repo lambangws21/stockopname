@@ -39,4 +39,7 @@ export interface CustomerMappingRow {
   practiceHospital3: string;
   photoUrl: string;
   photoFileId: string;
+  implantUsed: string;
+  procedureType: string;
+  usageHospital: string;
 }

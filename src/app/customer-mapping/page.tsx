@@ -70,6 +70,8 @@ type CustomerFormData = {
   photoUrl: string;
   photoFileId: string;
   photoDataUrl: string;
+  implantUsed: string;
+  procedureType: string;
 };
 
 type ConfirmState = {
@@ -78,6 +80,14 @@ type ConfirmState = {
   confirmLabel: string;
   tone?: "primary" | "danger";
   action: () => Promise<void> | void;
+};
+
+type UsageEntryState = {
+  row: CustomerMappingRow;
+  nextStage: CustomerJourneyStage;
+  hospital: string;
+  implantUsed: string;
+  procedureType: string;
 };
 
 const emptyForm: CustomerFormData = {
@@ -102,6 +112,8 @@ const emptyForm: CustomerFormData = {
   photoUrl: "",
   photoFileId: "",
   photoDataUrl: "",
+  implantUsed: "",
+  procedureType: "",
 };
 
 async function prepareDoctorPhoto(file: File) {
@@ -213,6 +225,7 @@ export default function CustomerMappingPage() {
   const [selectedId, setSelectedId] = useState("");
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [exporting, setExporting] = useState(false);
+  const [usageEntry, setUsageEntry] = useState<UsageEntryState | null>(null);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -352,6 +365,8 @@ export default function CustomerMappingPage() {
         { header: "Priority", key: "priority", width: 12 },
         { header: "Status", key: "status", width: 14 },
         { header: "Journey", key: "journey", width: 20 },
+        { header: "Implant Used", key: "implantUsed", width: 24 },
+        { header: "Procedure Type", key: "procedureType", width: 22 },
         { header: "Usage Count", key: "usage", width: 13 },
         { header: "Next Follow-up", key: "followup", width: 20 },
         { header: "Note", key: "note", width: 42 },
@@ -371,6 +386,8 @@ export default function CustomerMappingPage() {
         priority: row.priority,
         status: row.status,
         journey: journeyLabel[row.journeyStage || "PROSPECT"],
+        implantUsed: row.implantUsed,
+        procedureType: row.procedureType,
         usage: row.usageCount || 0,
         followup: row.nextFollowUp,
         note: row.note,
@@ -382,7 +399,7 @@ export default function CustomerMappingPage() {
       header.font = { bold: true, color: { argb: "FFFFFFFF" } };
       header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF172554" } };
       header.alignment = { vertical: "middle" };
-      sheet.autoFilter = { from: "A1", to: "Q1" };
+      sheet.autoFilter = { from: "A1", to: "S1" };
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber > 1) {
           row.alignment = { vertical: "top", wrapText: true };
@@ -474,6 +491,8 @@ export default function CustomerMappingPage() {
         photoUrl: row.photoUrl || "",
         photoFileId: row.photoFileId || "",
         photoDataUrl: "",
+        implantUsed: row.implantUsed || "",
+        procedureType: row.procedureType || "",
       });
       setFormNotice(missing);
       setResumeStatus(nextStatus);
@@ -559,6 +578,8 @@ export default function CustomerMappingPage() {
       photoUrl: row.photoUrl || "",
       photoFileId: row.photoFileId || "",
       photoDataUrl: "",
+      implantUsed: row.implantUsed || "",
+      procedureType: row.procedureType || "",
     });
     setFormNotice([]);
     setResumeStatus(null);
@@ -614,7 +635,7 @@ export default function CustomerMappingPage() {
     }
   }
 
-  async function advanceJourney(row: CustomerMappingRow, nextStage: CustomerJourneyStage) {
+  async function advanceJourney(row: CustomerMappingRow, nextStage: CustomerJourneyStage, usage?: Pick<UsageEntryState, "hospital" | "implantUsed" | "procedureType">) {
     setWorkingId(row.id);
     try {
       const response = await fetch("/api/customer-mapping", {
@@ -628,12 +649,16 @@ export default function CustomerMappingPage() {
           productOffered: row.productOffered,
           nextFollowUp: row.nextFollowUp,
           outcome: row.outcome,
+          usageHospital: usage?.hospital || row.usageHospital,
+          implantUsed: usage?.implantUsed || row.implantUsed,
+          procedureType: usage?.procedureType || row.procedureType,
           by: owner.trim() || row.owner || "Lambang",
         }),
       });
       const result = await response.json();
       if (!response.ok || result.status !== "success") throw new Error(result.message || "Gagal memperbarui journey");
       setRows((current) => current.map((item) => item.id === row.id ? result.data : item));
+      setUsageEntry(null);
       toast.success(`Journey diperbarui: ${journeyLabel[nextStage]}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal memperbarui journey");
@@ -672,16 +697,28 @@ export default function CustomerMappingPage() {
         photoUrl: row.photoUrl || "",
         photoFileId: row.photoFileId || "",
         photoDataUrl: "",
+        implantUsed: row.implantUsed || "",
+        procedureType: row.procedureType || "",
       });
       setFormNotice(missing);
       setResumeJourney(nextStage);
       toast.info(`Lengkapi ${missing.join(", ")} untuk melanjutkan journey`);
       return;
     }
+    if (nextStage === "FIRST_USE" || nextStage === "REPEAT_USE") {
+      setUsageEntry({
+        row,
+        nextStage,
+        hospital: row.usageHospital || row.hospital || row.practiceHospital2 || row.practiceHospital3 || "",
+        implantUsed: row.implantUsed || row.productOffered || "",
+        procedureType: row.procedureType || "",
+      });
+      return;
+    }
     askConfirmation({
-      title: nextStage === "REPEAT_USE" && current === "REPEAT_USE" ? "Catat Pemakaian Ulang?" : `Lanjut ke ${journeyLabel[nextStage]}?`,
+      title: `Lanjut ke ${journeyLabel[nextStage]}?`,
       message: `Journey ${row.doctor || row.hospital} akan diperbarui dan dicatat.`,
-      confirmLabel: nextStage === "REPEAT_USE" ? "Catat Penggunaan" : "Lanjutkan Journey",
+      confirmLabel: "Lanjutkan Journey",
       action: () => advanceJourney(row, nextStage),
     });
   }
@@ -735,13 +772,13 @@ export default function CustomerMappingPage() {
               </Link>
               <div>
                 <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-blue-100 ring-1 ring-white/15">
-                  <Target size={14} /> Customer acquisition workspace
+                  <Target size={14} /> User acquisition workspace
                 </div>
                 <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-                  Customer Mapping & Approval
+                  User Orthopedic Mapping 
                 </h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
-                  Impor mapping Excel, tentukan target, assign owner, dan approve customer
+                  Impor mapping Excel, tentukan target, assign owner, dan approve user
                   dalam satu pipeline yang tersinkron.
                 </p>
               </div>
@@ -767,7 +804,7 @@ export default function CustomerMappingPage() {
                     const file = event.target.files?.[0];
                     if (!file) return;
                     askConfirmation({
-                      title: "Import Customer Mapping?",
+                      title: "Import User Mapping?",
                       message: `${file.name}Data akan diperbarui`,
                       confirmLabel: "Ya, Import & Post",
                       action: () => upload(file),
@@ -812,6 +849,8 @@ export default function CustomerMappingPage() {
           priorities={dashboard.priorities}
           territories={dashboard.territories}
         />
+
+        <UsageAnalyticsPanel rows={rows} />
 
         <MyPlanPanel
           rows={rows}
@@ -931,6 +970,7 @@ export default function CustomerMappingPage() {
           intendedStatus={resumeStatus}
         />
       ) : null}
+      {usageEntry ? <UsageEntryModal value={usageEntry} busy={workingId === usageEntry.row.id} onChange={setUsageEntry} onCancel={() => setUsageEntry(null)} onConfirm={() => void advanceJourney(usageEntry.row, usageEntry.nextStage, usageEntry)} /> : null}
       {confirmation ? (
         <ConfirmationModal
           value={confirmation}
@@ -1019,6 +1059,7 @@ function JourneyWorkspace({ rows, onSelect, onAdvance }: { rows: CustomerMapping
                         <p className="mt-1 line-clamp-1 text-[11px] text-slate-400">{doctor.hospital || "Hospital belum diisi"}</p>
                         {doctor.productOffered ? <p className="mt-2 flex items-center gap-1 text-[11px] font-medium text-indigo-600"><Package size={12} /> {doctor.productOffered}</p> : null}
                         <p className="mt-2 line-clamp-2 text-[11px] leading-4 text-slate-500">{doctor.note || doctor.plan || "Belum ada note"}</p>
+                        {doctor.usageCount ? <p className="mt-2 rounded-lg bg-emerald-50 px-2 py-1.5 text-[10px] font-semibold text-emerald-700">Total {doctor.usageCount}x · Ulang {Math.max(0, doctor.usageCount - 1)}x</p> : null}
                       </button>
                       <button type="button" onClick={() => onAdvance(doctor)} className={`mt-3 inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold ${stage === "REPEAT_USE" ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100"}`}>
                         {stage === "REPEAT_USE" ? <Repeat2 size={11} /> : <span>→</span>}
@@ -1064,6 +1105,7 @@ function DoctorProfilePanel({ doctor, onEdit }: { doctor: CustomerMappingRow | n
           <ProfileLine icon={MapPin} label="Territory" value={doctor.territory || "Belum diisi"} />
           <ProfileLine icon={UserCheck} label="Owner / Sales" value={doctor.owner || "Belum diisi"} />
           <ProfileLine icon={Package} label="Produk" value={doctor.productOffered || "Belum ditawarkan"} />
+          <ProfileLine icon={Repeat2} label="Pemakaian / Ulang" value={`${doctor.usageCount || 0}x / ${Math.max(0, (doctor.usageCount || 0) - 1)}x`} />
         </div>
         <div className="mt-5"><p className="mb-2 text-sm font-semibold text-slate-700">Rumah Sakit Praktik ({hospitals.length}/3)</p><div className="space-y-2">{hospitals.length ? hospitals.map((hospital, index) => <div key={`${hospital}-${index}`} className="flex gap-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600"><Building2 className="shrink-0 text-indigo-500" size={16} /><span>{hospital}</span></div>) : <p className="text-sm text-slate-400">Belum ada rumah sakit praktik</p>}</div></div>
         <button type="button" onClick={() => onEdit(doctor)} className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white hover:bg-indigo-700"><Pencil size={15} /> Edit Profile & Foto</button>
@@ -1081,6 +1123,25 @@ function DoctorPhotoImage({ src, name, className }: { src: string; name: string;
   if (failedSrc === src) return <div className={`${className} flex items-center justify-center bg-linear-to-br from-indigo-100 to-blue-200 text-5xl font-semibold text-indigo-700`}>{name.replace(/^(dr\.?|Dr\.?)\s*/i, "").charAt(0) || "D"}</div>;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={`Foto ${name || "dokter"}`} className={className} onError={() => setFailedSrc(src)} />;
+}
+
+function UsageAnalyticsPanel({ rows }: { rows: CustomerMappingRow[] }) {
+  const chartsReady = useSyncExternalStore(() => () => {}, () => true, () => false);
+  const users = rows.filter((row) => (row.usageCount || 0) > 0).map((row) => ({ ...row, hospital: row.usageHospital || row.hospital })).sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0));
+  const repeats = users.filter((row) => (row.usageCount || 0) >= 2);
+  const totalUsage = users.reduce((sum, row) => sum + (row.usageCount || 0), 0);
+  const hospitals = new Set(users.map((row) => row.usageHospital || row.hospital).filter(Boolean)).size;
+  const chartData = users.slice(0, 7).map((row) => ({ name: row.doctor.replace(/^(dr\.?|Dr\.?)\s*/i, "").split(",")[0] || "Dokter", usage: row.usageCount || 0 }));
+  return (
+    <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2"><span className="rounded-xl bg-emerald-50 p-2 text-emerald-700"><Repeat2 size={18} /></span><h2 className="font-semibold">Doctor Implant Usage</h2></div><p className="mt-2 text-xs leading-5 text-slate-500">Pantau dokter yang menggunakan implant, lokasi rumah sakit, jenis tindakan, dan pemakaian ulang.</p></div><div className="grid grid-cols-3 gap-2"><UsageMiniStat label="Total pakai" value={`${totalUsage}x`} /><UsageMiniStat label="Repeat doctor" value={repeats.length} /><UsageMiniStat label="Rumah sakit" value={hospitals} /></div></div>
+      {users.length ? <div className="grid gap-5 p-4 xl:grid-cols-[0.9fr_1.4fr] xl:p-5"><article className="rounded-2xl bg-slate-50 p-4"><p className="text-sm font-semibold">Grafik pemakaian per dokter</p><p className="text-[11px] text-slate-400">Diurutkan berdasarkan total penggunaan</p><div className="mt-3 h-64">{chartsReady ? <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}><BarChart data={chartData} layout="vertical" margin={{ left: 5, right: 15 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" /><XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} /><YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 10 }} /><Tooltip formatter={(value) => [`${value}x`, "Pemakaian"]} contentStyle={{ borderRadius: 14, fontSize: 12 }} /><Bar dataKey="usage" fill="#10b981" radius={[0, 8, 8, 0]} animationDuration={900} /></BarChart></ResponsiveContainer> : <ChartSkeleton />}</div></article><div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead><tr className="border-b border-slate-200 text-slate-400"><th className="px-3 py-3 font-medium">Dokter</th><th className="px-3 py-3 font-medium">Rumah sakit</th><th className="px-3 py-3 font-medium">Implant</th><th className="px-3 py-3 font-medium">Tindakan</th><th className="px-3 py-3 text-center font-medium">Pemakaian</th></tr></thead><tbody className="divide-y divide-slate-100">{users.map((row) => <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} key={row.id} className="hover:bg-indigo-50/50"><td className="px-3 py-3"><p className="max-w-56 font-semibold text-slate-800">{row.doctor}</p><span className={row.usageCount >= 2 ? "text-emerald-600" : "text-blue-600"}>{row.usageCount >= 2 ? "Pemakaian ulang" : "Pemakaian pertama"}</span></td><td className="max-w-52 px-3 py-3 text-slate-600">{row.hospital || "Belum diisi"}</td><td className="px-3 py-3 font-medium text-indigo-700">{row.implantUsed || row.productOffered || "Belum diisi"}</td><td className="px-3 py-3 text-slate-600">{row.procedureType || "Belum diisi"}</td><td className="px-3 py-3 text-center"><span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 font-bold text-emerald-700">{row.usageCount}x</span></td></motion.tr>)}</tbody></table></div></div> : <div className="p-8 text-center"><Repeat2 className="mx-auto text-slate-300" size={32} /><p className="mt-3 text-sm font-semibold text-slate-700">Belum ada pemakaian implant tercatat</p><p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-slate-400">Lanjutkan journey dokter ke “Pemakaian Pertama”, kemudian isi implant dan jenis tindakan pada Edit Profile. Ringkasan dan grafik akan terbentuk otomatis.</p></div>}
+    </motion.section>
+  );
+}
+
+function UsageMiniStat({ label, value }: { label: string; value: string | number }) {
+  return <div className="min-w-20 rounded-xl bg-slate-50 px-3 py-2 text-center"><p className="text-lg font-semibold text-slate-800">{value}</p><p className="text-[9px] text-slate-400">{label}</p></div>;
 }
 
 function DashboardPanel({ total, statuses, journeys, priorities, territories }: { total: number; statuses: Array<{ name: CustomerStatus; value: number }>; journeys: Array<{ name: CustomerJourneyStage; value: number }>; priorities: Array<{ name: "HIGH" | "MEDIUM" | "LOW"; value: number }>; territories: Array<[string, number]> }) {
@@ -1171,7 +1232,7 @@ function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onSe
         <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
           <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-500">Sales Journey</span><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-indigo-700">{journeyLabel[stage]}</span></div>
           {row.productOffered ? <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-slate-700"><Package size={13} /> {row.productOffered}</p> : <p className="mt-2 text-xs text-amber-700">Produk belum ditentukan</p>}
-          {row.usageCount ? <p className="mt-1 text-[11px] text-slate-500">Total penggunaan: {row.usageCount}x</p> : null}
+          {row.usageCount ? <div className="mt-2 grid grid-cols-2 gap-2 text-center"><p className="rounded-lg bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-600">Total {row.usageCount}x</p><p className="rounded-lg bg-emerald-100 px-2 py-1.5 text-[10px] font-semibold text-emerald-700">Ulang {Math.max(0, row.usageCount - 1)}x</p></div> : null}
         </div>
       </div>
       <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
@@ -1214,20 +1275,42 @@ function CustomerTable({ rows, onSelect, onEdit }: { rows: CustomerMappingRow[];
   );
 }
 
+function UsageEntryModal({ value, busy, onChange, onCancel, onConfirm }: { value: UsageEntryState; busy: boolean; onChange: (value: UsageEntryState) => void; onCancel: () => void; onConfirm: () => void }) {
+  const hospitals = Array.from(new Set([value.row.hospital, value.row.practiceHospital2, value.row.practiceHospital3].filter(Boolean)));
+  const repeatCount = Math.max(0, value.row.usageCount - 1) + (value.nextStage === "REPEAT_USE" ? 1 : 0);
+  const complete = value.hospital.trim() && value.implantUsed.trim() && value.procedureType.trim();
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md"><motion.section initial={{ opacity: 0, y: 24, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 300, damping: 26 }} role="dialog" aria-modal="true" className="w-full max-w-xl overflow-hidden rounded-4xl bg-white shadow-2xl"><div className="bg-linear-to-br from-emerald-600 to-teal-700 px-6 py-6 text-center text-white"><span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/25"><Repeat2 size={26} /></span><p className="mt-4 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-100">Catat penggunaan implant</p><h2 className="mt-1 text-2xl font-semibold">{journeyLabel[value.nextStage]}</h2><p className="mt-1 text-xs text-emerald-100">{value.row.doctor}</p></div><div className="space-y-4 p-5 sm:p-6"><div className="grid grid-cols-2 gap-3"><div className="rounded-2xl bg-slate-50 p-3 text-center"><p className="text-2xl font-semibold">{value.row.usageCount + 1}x</p><p className="text-[10px] text-slate-400">Total setelah dicatat</p></div><div className="rounded-2xl bg-emerald-50 p-3 text-center"><p className="text-2xl font-semibold text-emerald-700">{repeatCount}x</p><p className="text-[10px] text-emerald-600">Jumlah pemakaian ulang</p></div></div><label className="block space-y-1.5 text-sm font-semibold text-slate-700">Rumah sakit tindakan<select value={value.hospital} onChange={(event) => onChange({ ...value, hospital: event.target.value })} className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 font-normal outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"><option value="">Pilih rumah sakit</option>{hospitals.map((hospital) => <option key={hospital} value={hospital}>{hospital}</option>)}</select><span className="block text-[10px] font-normal text-slate-400">Diambil dari maksimal tiga rumah sakit praktik dokter.</span></label><label className="block space-y-1.5 text-sm font-semibold text-slate-700">Implant yang digunakan<input value={value.implantUsed} onChange={(event) => onChange({ ...value, implantUsed: event.target.value })} list="customer-product-suggestions" placeholder="Contoh: Zimmer Persona / Normmed THR" className="h-12 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" /></label><label className="block space-y-1.5 text-sm font-semibold text-slate-700">Jenis tindakan<input value={value.procedureType} onChange={(event) => onChange({ ...value, procedureType: event.target.value })} placeholder="Contoh: TKR, THR, Hip Revision" className="h-12 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100" /></label>{!complete ? <p className="rounded-xl bg-amber-50 p-3 text-center text-xs text-amber-700">Rumah sakit, implant, dan jenis tindakan wajib dilengkapi.</p> : null}<div className="grid gap-2.5 pt-2 sm:grid-cols-2"><button type="button" disabled={busy} onClick={onCancel} className="order-2 h-12 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:order-1">Batal</button><button type="button" disabled={busy || !complete} onClick={onConfirm} className="order-1 inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-semibold text-white shadow-lg shadow-emerald-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 sm:order-2">{busy ? "Menyimpan..." : <><CheckCircle2 size={16} />Simpan Pemakaian</>}</button></div></div></motion.section></motion.div>;
+}
+
 function ConfirmationModal({ value, busy, onCancel, onConfirm }: { value: ConfirmState; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
   const danger = value.tone === "danger";
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busy) onCancel();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [busy, onCancel]);
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
-      <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-        <div className={`mb-4 inline-flex rounded-2xl p-3 ${danger ? "bg-rose-50 text-rose-600" : "bg-blue-50 text-blue-700"}`}>{danger ? <Trash2 size={24} /> : <CheckCircle2 size={24} />}</div>
-        <h2 className="text-xl font-semibold">{value.title}</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">{value.message}</p>
-        <div className="mt-6 flex justify-end gap-2">
-          <button type="button" disabled={busy} onClick={onCancel} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Batal</button>
-          <button type="button" disabled={busy} onClick={onConfirm} className={`rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${danger ? "bg-rose-600 hover:bg-rose-500" : "bg-blue-600 hover:bg-blue-500"}`}>{busy ? "Memproses..." : value.confirmLabel}</button>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
+      <motion.section initial={{ opacity: 0, y: 28, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 320, damping: 26 }} role="alertdialog" aria-modal="true" aria-labelledby="confirmation-title" className="relative w-full max-w-[460px] overflow-hidden rounded-4xl border border-white/60 bg-white shadow-[0_30px_90px_rgba(15,23,42,0.35)]">
+        <div className={`h-1.5 w-full ${danger ? "bg-linear-to-r from-rose-500 to-orange-400" : "bg-linear-to-r from-blue-600 via-indigo-500 to-violet-500"}`} />
+        <button type="button" aria-label="Tutup konfirmasi" disabled={busy} onClick={onCancel} className="absolute right-4 top-5 rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X size={18} /></button>
+        <div className="px-5 pb-5 pt-6 sm:px-7 sm:pb-7">
+          <motion.div initial={{ scale: 0.7, rotate: -8 }} animate={{ scale: 1, rotate: 0 }} transition={{ delay: 0.08, type: "spring" }} className={`relative mx-auto flex size-14 items-center justify-center rounded-2xl ${danger ? "bg-rose-50 text-rose-600 ring-1 ring-rose-100" : "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100"}`}>
+            <span className={`absolute inset-0 animate-ping rounded-2xl opacity-15 ${danger ? "bg-rose-400" : "bg-indigo-400"}`} />
+            {danger ? <Trash2 size={25} /> : <CheckCircle2 size={26} />}
+          </motion.div>
+          <div className="mt-5 text-center"><p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${danger ? "text-rose-500" : "text-indigo-500"}`}>{danger ? "Tindakan permanen" : "Konfirmasi tindakan"}</p><h2 id="confirmation-title" className="mt-1.5 text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">{value.title}</h2></div>
+          <div className={`mt-4 rounded-2xl border p-4 text-center ${danger ? "border-rose-100 bg-rose-50/70" : "border-slate-200 bg-slate-50"}`}><p className="text-sm leading-6 text-slate-600">{value.message}</p></div>
+          <div className="mt-4 flex flex-col items-center justify-center gap-1.5 text-center text-[11px] leading-5 text-slate-400"><span className={`flex size-7 items-center justify-center rounded-full ${danger ? "bg-rose-50 text-rose-500" : "bg-indigo-50 text-indigo-500"}`}><Clock3 size={13} /></span><p>{danger ? "Pastikan data yang dipilih sudah benar sebelum melanjutkan." : "Perubahan akan langsung diproses dan disinkronkan ke data utama."}</p></div>
+          <div className="mt-6 grid gap-2.5 sm:grid-cols-[1fr_1.45fr]">
+            <button type="button" disabled={busy} onClick={onCancel} className="order-2 inline-flex h-12 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:order-1">Batal</button>
+            <motion.button whileTap={{ scale: busy ? 1 : 0.97 }} type="button" disabled={busy} onClick={onConfirm} className={`order-1 inline-flex h-12 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white shadow-lg transition disabled:cursor-wait disabled:opacity-70 sm:order-2 ${danger ? "bg-rose-600 shadow-rose-200 hover:bg-rose-500" : "bg-indigo-600 shadow-indigo-200 hover:bg-indigo-500"}`}>{busy ? <><motion.span animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }} className="size-4 rounded-full border-2 border-white/35 border-t-white" />Memproses...</> : <>{danger ? <Trash2 size={16} /> : <CheckCircle2 size={16} />}{value.confirmLabel}</>}</motion.button>
+          </div>
         </div>
-      </div>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }
 
@@ -1268,6 +1351,8 @@ function CustomerFormModal({ form, saving, missingFields, intendedStatus, onChan
           <FormSelect label="Status" value={form.status} options={["NEW", "TARGETED", "APPROVED", "REJECTED"]} onChange={(value) => field("status", value)} />
           <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2"><p className="text-xs font-medium text-indigo-500">Sales Journey</p><p className="mt-1 text-sm font-semibold text-indigo-800">{journeyLabel[form.journeyStage]}</p><p className="text-[10px] text-indigo-500">Tahap diubah melalui tombol Lanjut pada kartu customer.</p></div>
           <FormProductInput value={form.productOffered} onChange={(value) => field("productOffered", value)} error={missingFields.includes("Product Offered")} />
+          <FormInput label="Implant yang digunakan" value={form.implantUsed} onChange={(value) => field("implantUsed", value)} placeholder="Contoh: Zimmer Persona / Normmed THR" />
+          <FormInput label="Jenis tindakan" value={form.procedureType} onChange={(value) => field("procedureType", value)} placeholder="Contoh: TKR, THR, Hip Revision" />
           <FormInput label="Follow-up berikutnya" value={form.nextFollowUp} onChange={(value) => field("nextFollowUp", value)} placeholder="Contoh: 2026-07-30 / hubungi kembali" />
           <FormTextarea label="Note" value={form.note} onChange={(value) => field("note", value)} placeholder="Catatan customer" />
           <FormTextarea label="Planning" value={form.plan} onChange={(value) => field("plan", value)} placeholder="Rencana pendekatan atau follow-up" error={missingFields.includes("Planning / Follow-up")} />

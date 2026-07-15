@@ -63,10 +63,19 @@ export async function POST(req: NextRequest) {
       targetAction === "customerUpsert" &&
       (typeof body.photoDataUrl === "string" ||
         Object.prototype.hasOwnProperty.call(body, "photoFileId"));
+    const requiresUsageSupport =
+      (targetAction === "customerUpsert" || targetAction === "customerJourney") &&
+      (Object.prototype.hasOwnProperty.call(body, "implantUsed") ||
+        Object.prototype.hasOwnProperty.call(body, "procedureType"));
+    const requiresUsageHospitalSupport =
+      targetAction === "customerJourney" &&
+      Object.prototype.hasOwnProperty.call(body, "usageHospital");
     if (
       !capabilityResponse.ok ||
       capability?.status !== "success" ||
       capability?.module !== "CustomerMapping" ||
+      (requiresUsageHospitalSupport && Number(capability?.version || 0) < 7) ||
+      (requiresUsageSupport && Number(capability?.version || 0) < 6) ||
       (requiresPhotoSupport && Number(capability?.version || 0) < 5) ||
       !Array.isArray(capability?.actions) ||
       !capability.actions.includes(targetAction)
@@ -76,7 +85,11 @@ export async function POST(req: NextRequest) {
           status: "error",
           code: "CUSTOMER_SCRIPT_NOT_DEPLOYED",
           message:
-            requiresPhotoSupport
+            requiresUsageHospitalSupport
+              ? "Pencatatan rumah sakit pemakaian memerlukan Apps Script Customer Mapping versi 7. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
+              : requiresUsageSupport
+              ? "Pencatatan implant dan tindakan memerlukan Apps Script Customer Mapping versi 6. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
+              : requiresPhotoSupport
               ? "Fitur foto dokter memerlukan Apps Script Customer Mapping versi 5. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
               : "Update dibatalkan agar tidak masuk ke sheet stok. Deploy Apps Script customer mapping terbaru terlebih dahulu.",
         },
