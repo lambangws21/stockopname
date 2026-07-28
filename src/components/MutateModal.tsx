@@ -10,6 +10,7 @@ import {
   Stethoscope,
   X,
   LoaderCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { StockRow } from "@/types/stock";
 import { useStockMutation } from "@/hooks/useStockMutation";
@@ -302,6 +303,19 @@ export default function MutateModal({
                   </div>
                 </div>
               </div>
+
+              {!isStockIn && nextStock === 0 && (
+                <div className="flex gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+                  <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-bold">Stok akan habis</p>
+                    <p className="mt-0.5 text-xs leading-5">
+                      Setelah disimpan, implant ini tidak memiliki stok tersisa.
+                      Sistem akan menambahkan note warning agar segera dilakukan refill.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="mb-1.5 block text-sm font-semibold">

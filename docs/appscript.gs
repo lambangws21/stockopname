@@ -1,8 +1,9 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 19;
+const APP_VERSION = 21;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
+const STOCK_WARNING_SHEET = "StockWarnings";
 const STOCK_SPREADSHEET_ID =
   "1vGg0gPbaedxuVbvQhXy4oh9sX34RYHF-B3SJySuORkw";
 const STOCK_SHEET_GID = "136121031";
@@ -42,6 +43,21 @@ const STOCK_HISTORY_HEADERS = [
   "No",
   "Changes",
   "By",
+];
+const STOCK_WARNING_HEADERS = [
+  "UpdatedAt",
+  "Status",
+  "StockSheet",
+  "No",
+  "NoStok",
+  "Deskripsi",
+  "Implant",
+  "Brand",
+  "Batch",
+  "SisaStock",
+  "Note",
+  "LastMovement",
+  "ResolvedAt",
 ];
 const CUSTOMER_HISTORY_HEADERS = [
   "Timestamp",
@@ -406,9 +422,25 @@ function setupApplicationSheets() {
   historySheet.setFrozenRows(1);
   historySheet.getRange("A:A").setNumberFormat("yyyy-mm-dd hh:mm:ss");
 
+  const warningSheet = getOrCreateSheet(STOCK_WARNING_SHEET);
+  ensureHeaderRow(warningSheet, STOCK_WARNING_HEADERS);
+  warningSheet
+    .getRange(1, 1, 1, STOCK_WARNING_HEADERS.length)
+    .setValues([STOCK_WARNING_HEADERS])
+    .setBackground("#b91c1c")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold");
+  warningSheet.setFrozenRows(1);
+  warningSheet.getRange("A:A").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  warningSheet.getRange("M:M").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  warningSheet.setColumnWidth(6, 280);
+  warningSheet.setColumnWidth(11, 330);
+  warningSheet.setColumnWidth(12, 280);
+
   const customerSheet = getCustomerSheet();
   const customerHistorySheet = getCustomerHistorySheet();
   const customerUsageSheet = getCustomerUsageSheet();
+  syncStockWarnings();
 
   return {
     status: "success",
@@ -419,11 +451,87 @@ function setupApplicationSheets() {
     sheets: [
       stockResult.sheet,
       historySheet.getName(),
+      warningSheet.getName(),
       customerSheet.getName(),
       customerHistorySheet.getName(),
       customerUsageSheet.getName(),
     ],
   };
+}
+
+function getStockWarningSheet() {
+  const sheet = getOrCreateSheet(STOCK_WARNING_SHEET);
+  ensureHeaderRow(sheet, STOCK_WARNING_HEADERS);
+  return sheet;
+}
+
+function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
+  const warningSheet = getStockWarningSheet();
+  const rows = warningSheet.getDataRange().getValues();
+  const noStok = String(stockRow.NoStok || "").trim();
+  const batch = String(stockRow.Batch || "").trim();
+  const remaining = safeNumber(stockRow.TotalQty);
+  const now = new Date();
+  let targetRow = 0;
+
+  for (var i = 1; i < rows.length; i++) {
+    if (
+      String(rows[i][2]) === String(stockSheetName) &&
+      String(rows[i][4]) === noStok &&
+      String(rows[i][8]) === batch
+    ) {
+      targetRow = i + 1;
+      break;
+    }
+  }
+
+  const isWarning = remaining <= LOW_STOCK_THRESHOLD;
+  const status = remaining <= 0 ? "HABIS" : "AKAN HABIS";
+  const note =
+    remaining <= 0
+      ? "WARNING: Implant sudah habis dan tidak tersedia lagi. Segera lakukan refill."
+      : "WARNING: Sisa 1. Jika digunakan lagi implant akan habis dan tidak tersedia.";
+
+  if (!isWarning && !targetRow) return;
+
+  const values = [
+    now,
+    isWarning ? status : "SELESAI",
+    stockSheetName,
+    safeNumber(no),
+    noStok,
+    stockRow.Deskripsi || "",
+    stockRow.Implant || "",
+    stockRow.Brand || "",
+    batch,
+    remaining,
+    isWarning ? note : "Stok sudah tersedia kembali.",
+    lastMovement || stockRow.KET || "",
+    isWarning ? "" : now,
+  ];
+
+  if (targetRow) {
+    warningSheet
+      .getRange(targetRow, 1, 1, STOCK_WARNING_HEADERS.length)
+      .setValues([values]);
+  } else {
+    warningSheet.appendRow(values);
+  }
+}
+
+function syncStockWarnings() {
+  const stockSheet = getOrCreateSheet(DEFAULT_SHEET);
+  normalizeSheet(stockSheet);
+  const rows = stockSheet.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    upsertStockWarning(
+      stockSheet.getName(),
+      i + 1,
+      rowArrayToObject(rows[i], i + 1),
+      rows[i][9] || ""
+    );
+  }
+  return { status: "success", message: "StockWarnings berhasil disinkronkan" };
 }
 
 function onOpen() {
@@ -805,6 +913,12 @@ function handleCreate(body) {
   sheet.appendRow(row);
   const no = sheet.getLastRow();
 
+  upsertStockWarning(
+    sheet.getName(),
+    no,
+    rowArrayToObject(row, no),
+    payload.KET || "Data stok dibuat"
+  );
   logHistory("CREATE", sheet.getName(), no, {}, rowArrayToObject(row, no), payload.by);
   return { status: "success", No: no };
 }
@@ -852,6 +966,7 @@ function handleUpdate(body) {
   sheet.getRange(idx + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
   const after = rowArrayToObject(updated, no);
 
+  upsertStockWarning(sheet.getName(), no, after, nextKet || "Data stok diperbarui");
   logHistory("UPDATE", sheet.getName(), no, before, after, payload.by);
   return { status: "success" };
 }
@@ -961,9 +1076,18 @@ function handleMutasi(body) {
   );
   // Kolom KET hanya menyimpan aktivitas paling baru agar mudah dibaca.
   // Aktivitas sebelumnya tetap tersimpan lengkap di sheet History.
-  updated[9] = movementDescription;
+  updated[9] =
+    currentQty <= 0 && type === "out"
+      ? movementDescription + " • WARNING: STOK HABIS — SEGERA REFILL"
+      : movementDescription;
 
   sheet.getRange(idx + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
+  upsertStockWarning(
+    sheet.getName(),
+    no,
+    rowArrayToObject(updated, no),
+    movementDescription
+  );
   logHistory(
     movementReason,
     sheet.getName(),
@@ -1736,6 +1860,7 @@ function doGet(e) {
     }
     if (action === "history") return cors(getHistory(req));
     if (action === "setupSheet") return cors(setupApplicationSheets());
+    if (action === "syncWarnings") return cors(syncStockWarnings());
     if (action === "customerCapabilities") {
       return cors({
         status: "success",

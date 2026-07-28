@@ -25,6 +25,8 @@ import {
   ChevronDown,
   Table2,
   LayoutGrid,
+  ClipboardCheck,
+  BellRing,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +38,8 @@ import RowActions from "./RowActions";
 import HistoryTimelineModal from "./HistoryModalTimeline";
 import QuickSearch from "./QuickSearch";
 import MutateModal from "./MutateModal";
+import StockOpnameModal from "./StockOpnameModal";
+import LowStockAlertModal from "./LowStockAlertModal";
 import { gasGetHistoryWithContext, type GasSheetContext } from "@/lib/gas";
 import { parseChanges } from "@/lib/history";
 import type { HistoryRow } from "@/types/history";
@@ -50,6 +54,7 @@ import { toast } from "sonner";
 type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
 type BrandFilter = "NORMMED" | "ZIMMER";
 type ImplantFilter = StockImplantCategory;
+type StockStatusFilter = "ALL" | "LOW" | "OUT";
 type ExternalScanPayload = {
   ref: string;
   lot?: string;
@@ -138,8 +143,16 @@ export default function StockTablePremium({
   context?: GasSheetContext;
   title?: string;
 }) {
+  const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false);
+
   const handleRemoteChange = useCallback(() => {
     toast.info("Data diperbarui oleh user lain. Tabel disegarkan otomatis.");
+  }, []);
+
+  const handleInitialStockLoad = useCallback((rows: StockRow[]) => {
+    if (rows.some((row) => Number(row.TotalQty || 0) <= 1)) {
+      setLowStockAlertOpen(true);
+    }
   }, []);
 
   const { data, loading, mutating, reload, createRow, updateRow } = useStockCRUD({
@@ -147,6 +160,7 @@ export default function StockTablePremium({
     context,
     pollIntervalMs: 12000,
     onRemoteChange: handleRemoteChange,
+    onInitialLoad: handleInitialStockLoad,
   });
 
   const [editOpen, setEditOpen] = useState(false);
@@ -159,6 +173,10 @@ export default function StockTablePremium({
   const [brandFilters, setBrandFilters] = useState<BrandFilter[]>([]);
   const [implantFilters, setImplantFilters] = useState<ImplantFilter[]>([]);
   const [viewMode, setViewMode] = useState<"table" | "card">("table");
+  const [stockStatusFilter, setStockStatusFilter] =
+    useState<StockStatusFilter>("ALL");
+  const [lowStockThreshold, setLowStockThreshold] = useState(1);
+  const [opnameOpen, setOpnameOpen] = useState(false);
 
   const [isCreate, setIsCreate] = useState(false);
 
@@ -208,8 +226,15 @@ export default function StockTablePremium({
       const matchesImplant =
         implantFilters.length === 0 ||
         implantFilters.includes(rowImplant as ImplantFilter);
+      const stockQty = toSafeNumber(r.TotalQty);
+      const matchesStockStatus =
+        stockStatusFilter === "ALL" ||
+        (stockStatusFilter === "OUT" && stockQty <= 0) ||
+        (stockStatusFilter === "LOW" &&
+          stockQty > 0 &&
+          stockQty <= lowStockThreshold);
 
-      if (!matchesBrand || !matchesImplant) return false;
+      if (!matchesBrand || !matchesImplant || !matchesStockStatus) return false;
       if (!q) return true;
 
       const ref = String(r.NoStok ?? "").toLowerCase();
@@ -224,7 +249,15 @@ export default function StockTablePremium({
         ref.includes(q) || lot.includes(q) || nama.includes(q)
       );
     });
-  }, [data, activeSearch, activeMode, brandFilters, implantFilters]);
+  }, [
+    data,
+    activeSearch,
+    activeMode,
+    brandFilters,
+    implantFilters,
+    stockStatusFilter,
+    lowStockThreshold,
+  ]);
 
   const tableData = useStockTable(filteredData);
   const setTablePage = tableData.setPage;
@@ -348,9 +381,23 @@ export default function StockTablePremium({
     [movementEntries]
   );
 
+  const lowStockAlertCount = useMemo(
+    () =>
+      data.filter((row) => Number(row.TotalQty || 0) <= lowStockThreshold)
+        .length,
+    [data, lowStockThreshold]
+  );
+
   useEffect(() => {
     setTablePage(1);
-  }, [brandFilters, implantFilters, activeSearch, setTablePage]);
+  }, [
+    brandFilters,
+    implantFilters,
+    stockStatusFilter,
+    lowStockThreshold,
+    activeSearch,
+    setTablePage,
+  ]);
 
   /* ================= HIGHLIGHT ================= */
   const highlight = (text: string | number) => {
@@ -439,12 +486,32 @@ export default function StockTablePremium({
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-5 gap-2">
           <button onClick={reload} className="rounded-lg border border-white/20 bg-white/10 p-2.5 hover:bg-white/20" title="Muat ulang">
             <RefreshCcw size={14} />
           </button>
           <button onClick={handleExport} className="rounded-lg border border-white/20 bg-white/10 p-2.5 hover:bg-white/20" title="Export Excel">
             <FileSpreadsheet size={14} />
+          </button>
+          <button
+            onClick={() => setOpnameOpen(true)}
+            className="rounded-lg border border-white/20 bg-white/10 p-2.5 hover:bg-white/20"
+            title="Stock opname cepat"
+          >
+            <ClipboardCheck size={14} />
+          </button>
+          <button
+            onClick={() => setLowStockAlertOpen(true)}
+            disabled={lowStockAlertCount === 0}
+            className="relative rounded-lg border border-white/20 bg-white/10 p-2.5 hover:bg-white/20 disabled:opacity-40"
+            title="Lihat peringatan stok"
+          >
+            <BellRing size={14} />
+            {lowStockAlertCount > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-red-500 px-1 text-[9px] font-bold leading-4 text-white">
+                {lowStockAlertCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => {
@@ -535,6 +602,7 @@ export default function StockTablePremium({
               setImplantFilters([]);
               setSearch("");
               setMode("ALL");
+              setStockStatusFilter("ALL");
             }}
             className="text-[11px] font-semibold text-blue-600 hover:underline"
           >
@@ -608,6 +676,45 @@ export default function StockTablePremium({
             <LayoutGrid size={13} /> Card
           </button>
         </div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t pt-2">
+          <span className="mr-1 text-[10px] font-semibold text-zinc-500">
+            Status stok
+          </span>
+          {([
+            ["ALL", "Semua"],
+            ["LOW", "Menipis"],
+            ["OUT", "Habis"],
+          ] as const).map(([value, label]) => (
+            <button
+              type="button"
+              key={value}
+              onClick={() => setStockStatusFilter(value)}
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                stockStatusFilter === value
+                  ? value === "OUT"
+                    ? "border-red-600 bg-red-600 text-white"
+                    : value === "LOW"
+                    ? "border-amber-500 bg-amber-500 text-white"
+                    : "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
+                  : "bg-white text-zinc-500 dark:bg-zinc-900"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <label className="ml-auto inline-flex items-center gap-1.5 text-[10px] text-zinc-500">
+            Batas minimum
+            <input
+              type="number"
+              min={0}
+              value={lowStockThreshold}
+              onChange={(event) =>
+                setLowStockThreshold(Math.max(0, Number(event.target.value) || 0))
+              }
+              className="h-7 w-14 rounded-md border bg-white px-2 text-center font-bold text-zinc-900 dark:bg-zinc-900 dark:text-white"
+            />
+          </label>
         </div>
       </div>
       <QuickSearch
@@ -935,7 +1042,7 @@ export default function StockTablePremium({
                 </div>
               </div>
               <div className={`shrink-0 rounded-xl px-3 py-2 text-center ${
-                r.TotalQty <= 1
+                r.TotalQty <= lowStockThreshold
                   ? "bg-red-50 text-red-700 dark:bg-red-950/30"
                   : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30"
               }`}>
@@ -1068,6 +1175,23 @@ export default function StockTablePremium({
         onSuccess={async () => {
           await reload();
           setMovementRefresh((value) => value + 1);
+        }}
+      />
+
+      <StockOpnameModal
+        open={opnameOpen}
+        rows={data}
+        onClose={() => setOpnameOpen(false)}
+      />
+
+      <LowStockAlertModal
+        open={lowStockAlertOpen}
+        rows={data}
+        threshold={lowStockThreshold}
+        onClose={() => setLowStockAlertOpen(false)}
+        onShowStatus={(status) => {
+          setStockStatusFilter(status);
+          setLowStockAlertOpen(false);
         }}
       />
 

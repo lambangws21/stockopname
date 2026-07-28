@@ -15,6 +15,7 @@ type UseStockCRUDParams = {
   context?: GasSheetContext;
   pollIntervalMs?: number;
   onRemoteChange?: () => void;
+  onInitialLoad?: (rows: StockRow[]) => void;
 };
 
 type ReloadOptions = {
@@ -45,6 +46,7 @@ export function useStockCRUD({
   context,
   pollIntervalMs = 0,
   onRemoteChange,
+  onInitialLoad,
 }: UseStockCRUDParams) {
   const [data, setData] = useState<StockRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,8 +84,12 @@ export function useStockCRUD({
       }
 
       signatureRef.current = nextSignature;
+      const isInitialLoad = !initializedRef.current;
       initializedRef.current = true;
       setData(rows);
+      if (isInitialLoad) {
+        onInitialLoad?.(rows);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       if (!initializedRef.current) {
@@ -94,7 +100,7 @@ export function useStockCRUD({
         setLoading(false);
       }
     }
-  }, [sheet, context, onRemoteChange]);
+  }, [sheet, context, onRemoteChange, onInitialLoad]);
 
   const reload = useCallback(async () => {
     await reloadWithOptions({ source: "manual" });
