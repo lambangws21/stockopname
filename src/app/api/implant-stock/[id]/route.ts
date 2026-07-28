@@ -10,6 +10,9 @@ interface UpdateStockPayload {
   refill: number;
   used: number;
   note?: string;
+  procedure?: ImplantedFirestoreStock["procedure"];
+  brand?: ImplantedFirestoreStock["brand"];
+  component?: string;
 }
 
 /* =========================
@@ -43,6 +46,9 @@ function buildStock(body: UpdateStockPayload) {
     terpakai: body.used,
     totalQty,
     keterangan: body.note ?? "",
+    procedure: body.procedure,
+    brand: body.brand,
+    component: body.component ?? "",
     updatedAt: new Date(), // ✅ STABIL
   };
 }

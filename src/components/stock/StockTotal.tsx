@@ -25,7 +25,7 @@ export default function StockTotal({ reloadKey }: StockTotalProps) {
           : [];
 
         const sum = data.reduce(
-          (acc: number, item: ImplantStockItem) => acc + Number(item.qty || 0),
+          (acc: number, item: ImplantStockItem) => acc + Number(item.totalQty || 0),
           0
         );
 

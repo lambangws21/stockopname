@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronUp, ExternalLink, RefreshCcw } from "lucide-react";
+import { ExternalLink, RefreshCcw, Sheet, X } from "lucide-react";
 
 type ExternalSheetSlideProps = {
   sourceUrl: string;
@@ -63,36 +63,55 @@ export default function ExternalSheetSlide({
   if (!String(sourceUrl || "").trim()) return null;
 
   return (
-    <section className="rounded-xl border bg-white dark:bg-zinc-900 p-4 space-y-3 shadow-sm">
+    <section className="rounded-xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3"
+        className="flex w-full items-center gap-3 text-left"
       >
-        <div className="text-left">
-          <div className="font-semibold text-sm md:text-base">{title}</div>
-          <div className="text-xs text-zinc-500">
-            Preview live dari Google Sheet (slide panel)
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40">
+          <Sheet size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">{title}</div>
+          <div className="text-[11px] text-zinc-500">
+            Preview data sumber
           </div>
         </div>
-        <span className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs">
-          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          {open ? "Tutup" : "Buka"}
+        <span className="rounded-lg border px-3 py-2 text-xs font-semibold">
+          Buka
         </span>
       </button>
 
-      <div
-        className={`grid transition-all duration-300 ${
-          open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-        }`}
-      >
-        <div className="overflow-hidden space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
+      {open && (
+        <div className="fixed inset-0 z-[10000] flex justify-end bg-zinc-950/55 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Tutup preview sheet"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <aside className="relative flex h-full w-full flex-col bg-white shadow-2xl dark:bg-zinc-900 sm:max-w-3xl">
+            <div className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-bold sm:text-base">{title}</h2>
+                <p className="text-[11px] text-zinc-500">Preview langsung dari Google Sheet</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg border hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              >
+                <X size={17} />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 sm:px-5">
             <a
               href={sourceUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold"
             >
               <ExternalLink size={12} />
               Buka Link Asli
@@ -100,29 +119,25 @@ export default function ExternalSheetSlide({
             <button
               type="button"
               onClick={() => setFrameKey((v) => v + 1)}
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs"
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold"
             >
               <RefreshCcw size={12} />
               Reload
             </button>
           </div>
 
-          <div className="rounded-xl border overflow-hidden bg-zinc-100 dark:bg-zinc-950">
+          <div className="min-h-0 flex-1 bg-zinc-100 p-2 dark:bg-zinc-950 sm:p-3">
             <iframe
               key={frameKey}
               src={embedUrl}
               title={title}
-              className="w-full h-[420px] md:h-[560px] bg-white"
+              className="h-full w-full rounded-lg border bg-white"
               loading="lazy"
             />
           </div>
-
-          <p className="text-[11px] text-zinc-500">
-            Jika kosong, pastikan sheet sumber punya akses view / publish.
-          </p>
+          </aside>
         </div>
-      </div>
+      )}
     </section>
   );
 }
-

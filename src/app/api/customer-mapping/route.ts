@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
           status: "error",
           code: "CUSTOMER_SCRIPT_NOT_DEPLOYED",
           message:
-            "Apps Script customer mapping belum di-deploy. Perbarui deployment menggunakan docs/super-sheet-final.gs.",
+            "Apps Script customer mapping belum di-deploy. Perbarui deployment menggunakan docs/appscript.gs.",
         },
         { status: 409 }
       );
@@ -70,10 +70,18 @@ export async function POST(req: NextRequest) {
     const requiresUsageHospitalSupport =
       targetAction === "customerJourney" &&
       Object.prototype.hasOwnProperty.call(body, "usageHospital");
+    const requiresJourneyHistorySupport = targetAction === "customerJourney";
+    const requiresTargetProfileSupport =
+      Object.prototype.hasOwnProperty.call(body, "monthlyCaseCount") ||
+      Object.prototype.hasOwnProperty.call(body, "orthopedicCaseTypes") ||
+      Object.prototype.hasOwnProperty.call(body, "implantVendors") ||
+      Object.prototype.hasOwnProperty.call(body, "vendorSupport");
     if (
       !capabilityResponse.ok ||
       capability?.status !== "success" ||
       capability?.module !== "CustomerMapping" ||
+      (requiresTargetProfileSupport && Number(capability?.version || 0) < 10) ||
+      (requiresJourneyHistorySupport && Number(capability?.version || 0) < 8) ||
       (requiresUsageHospitalSupport && Number(capability?.version || 0) < 7) ||
       (requiresUsageSupport && Number(capability?.version || 0) < 6) ||
       (requiresPhotoSupport && Number(capability?.version || 0) < 5) ||
@@ -85,12 +93,16 @@ export async function POST(req: NextRequest) {
           status: "error",
           code: "CUSTOMER_SCRIPT_NOT_DEPLOYED",
           message:
-            requiresUsageHospitalSupport
-              ? "Pencatatan rumah sakit pemakaian memerlukan Apps Script Customer Mapping versi 7. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
+            requiresTargetProfileSupport
+              ? "Profil potensi dan priority otomatis memerlukan Apps Script Customer Mapping versi 10. Deploy ulang docs/appscript.gs terlebih dahulu."
+              : requiresJourneyHistorySupport
+              ? "Form journey bertahap dan sheet CustomerUsageHistory memerlukan Apps Script Customer Mapping versi 8. Deploy ulang docs/appscript.gs terlebih dahulu."
+              : requiresUsageHospitalSupport
+              ? "Pencatatan rumah sakit pemakaian memerlukan Apps Script Customer Mapping versi 7. Deploy ulang docs/appscript.gs terlebih dahulu."
               : requiresUsageSupport
-              ? "Pencatatan implant dan tindakan memerlukan Apps Script Customer Mapping versi 6. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
+              ? "Pencatatan implant dan tindakan memerlukan Apps Script Customer Mapping versi 6. Deploy ulang docs/appscript.gs terlebih dahulu."
               : requiresPhotoSupport
-              ? "Fitur foto dokter memerlukan Apps Script Customer Mapping versi 5. Deploy ulang docs/super-sheet-final.gs terlebih dahulu."
+              ? "Fitur foto dokter memerlukan Apps Script Customer Mapping versi 5. Deploy ulang docs/appscript.gs terlebih dahulu."
               : "Update dibatalkan agar tidak masuk ke sheet stok. Deploy Apps Script customer mapping terbaru terlebih dahulu.",
         },
         { status: 409 }

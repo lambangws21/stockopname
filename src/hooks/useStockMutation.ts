@@ -17,33 +17,55 @@ export function useStockMutation(
   context?: GasSheetContext
 ) {
   /* ================= MUTASI IN ================= */
-  const mutateIn = async (No: number, qty: number) => {
+  const mutateIn = async (
+    No: number,
+    qty: number,
+    movementReason: "REFILL" | "MOBILISASI_MASUK",
+    note: string
+  ) => {
     if (!No || qty <= 0) {
       throw new Error("Invalid mutateIn payload");
     }
 
-    return gasMutasi({
+    const result = await gasMutasi({
       sheet,
       ...context,
       No,
       qty,
       type: "in",
+      movementReason,
+      note,
     });
+    if (result.status === "error") {
+      throw new Error(result.message || "Gagal menambah stok");
+    }
+    return result;
   };
 
   /* ================= MUTASI OUT ================= */
-  const mutateOut = async (No: number, qty: number) => {
+  const mutateOut = async (
+    No: number,
+    qty: number,
+    movementReason: "OPERASI" | "MOBILISASI_KELUAR",
+    note: string
+  ) => {
     if (!No || qty <= 0) {
       throw new Error("Invalid mutateOut payload");
     }
 
-    return gasMutasi({
+    const result = await gasMutasi({
       sheet,
       ...context,
       No,
       qty,
       type: "out",
+      movementReason,
+      note,
     });
+    if (result.status === "error") {
+      throw new Error(result.message || "Gagal mengurangi stok");
+    }
+    return result;
   };
 
   /* ================= DUPLICATE ================= */

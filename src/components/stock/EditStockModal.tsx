@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { ImplantStockItem } from "@/types/implant-stock";
+import {
+  IMPLANT_BRANDS,
+  IMPLANT_MASTER_DATA,
+  IMPLANT_PROCEDURES,
+} from "@/lib/implantCatalog";
 
 interface EditStockModalProps {
   open: boolean;
@@ -24,6 +29,9 @@ export function EditStockModal({
   const [used, setUsed] = useState<number>(0);
   const [refill, setRefill] = useState<number>(0);
   const [note, setNote] = useState("");
+  const [procedure, setProcedure] = useState("");
+  const [brand, setBrand] = useState("");
+  const [component, setComponent] = useState("");
   const [saving, setSaving] = useState(false);
 
   // ✅ SYNC DATA DARI TABLE KE FORM
@@ -37,6 +45,9 @@ export function EditStockModal({
       setUsed(Number(item.used ?? 0));
       setRefill(Number(item.refill ?? 0));
       setNote(String(item.note ?? ""));
+      setProcedure(String(item.procedure ?? ""));
+      setBrand(String(item.brand ?? ""));
+      setComponent(String(item.component ?? ""));
     }
   }, [item]);
 
@@ -58,6 +69,9 @@ export function EditStockModal({
           used,
           refill,
           note,
+          procedure,
+          brand,
+          component,
         }),
       });
   
@@ -114,6 +128,56 @@ export function EditStockModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-zinc-500">Jenis Implant</label>
+              <select
+                className="w-full border px-3 py-2 rounded-lg text-sm"
+                value={procedure}
+                onChange={(e) => {
+                  setProcedure(e.target.value);
+                  setComponent("");
+                }}
+              >
+                <option value="">Pilih jenis</option>
+                {IMPLANT_PROCEDURES.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-500">Brand</label>
+              <select
+                className="w-full border px-3 py-2 rounded-lg text-sm"
+                value={brand}
+                onChange={(e) => {
+                  setBrand(e.target.value);
+                  setComponent("");
+                }}
+              >
+                <option value="">Pilih brand</option>
+                {IMPLANT_BRANDS.map((value) => <option key={value}>{value}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-zinc-500">Komponen</label>
+            <select
+              className="w-full border px-3 py-2 rounded-lg text-sm"
+              value={component}
+              onChange={(e) => setComponent(e.target.value)}
+              disabled={!procedure || !brand}
+            >
+              <option value="">Pilih komponen</option>
+              {procedure && brand
+                ? IMPLANT_MASTER_DATA[
+                    procedure as keyof typeof IMPLANT_MASTER_DATA
+                  ][brand as keyof (typeof IMPLANT_MASTER_DATA)["THR"]].map(
+                    (value) => <option key={value}>{value}</option>
+                  )
+                : null}
+            </select>
           </div>
 
           {/* Batch */}

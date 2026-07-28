@@ -15,6 +15,9 @@ interface ImplantStockRow {
   TERPAKAI?: number;
   REFILL?: number;
   KET?: string;
+  Procedure?: string;
+  Brand?: string;
+  Component?: string;
 }
 
 /* ==============================
@@ -71,6 +74,9 @@ export async function POST(req: NextRequest) {
         TERPAKAI: Number(v[7]) || 0,
         REFILL: Number(v[8]) || 0,
         KET: String(v[9] ?? ""),
+        Procedure: String(v[10] ?? "").toUpperCase(),
+        Brand: String(v[11] ?? "").toUpperCase(),
+        Component: String(v[12] ?? ""),
       };
 
       // skip empty row
@@ -79,8 +85,22 @@ export async function POST(req: NextRequest) {
       const docRef = colRef.doc();
 
       batch.set(docRef, {
-        ...data,
+        no: data.No ?? inserted + 1,
+        noStok: data.NoStok ?? "",
+        deskripsi: data.Deskripsi ?? "",
+        batch: data.Batch ?? "",
+        qty: data.Qty ?? 0,
+        totalQty:
+          data.TotalQty ?? (data.Qty ?? 0) + (data.REFILL ?? 0) - (data.TERPAKAI ?? 0),
+        terpakai: data.TERPAKAI ?? 0,
+        refill: data.REFILL ?? 0,
+        keterangan: data.KET ?? "",
+        procedure: data.Procedure || undefined,
+        brand: data.Brand || undefined,
+        component: data.Component || "",
+        isDeleted: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         source: "excel-upload",
       });
 
@@ -91,8 +111,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       status: "success",
-      inserted,
-      sheet: worksheet.name,
+      message: `${inserted} data berhasil disimpan`,
+      meta: {
+        fileName: file.name,
+        uploadedAt: new Date().toISOString(),
+        totalRows: inserted,
+      },
     });
   } catch (err) {
     console.error("UPLOAD ERROR:", err);

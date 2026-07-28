@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { ImplantStockItemBase } from "@/types/implant-stock";
-
 interface UploadStockExcelProps {
   onUploaded?: () => void;
 }
@@ -18,7 +16,6 @@ interface UploadResponse {
     uploadedAt: string;
     totalRows: number;
   };
-  data: ImplantStockItemBase[];
 }
 
 export function UploadStockExcel({ onUploaded }: UploadStockExcelProps) {
@@ -48,7 +45,7 @@ export function UploadStockExcel({ onUploaded }: UploadStockExcelProps) {
 
       const result: UploadResponse = await res.json();
 
-      if (result.data.length === 0) {
+      if (result.meta.totalRows === 0) {
         setStatus("error");
         setMessage("File kosong atau tidak ada baris yang terbaca.");
         return;

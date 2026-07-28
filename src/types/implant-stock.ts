@@ -34,6 +34,9 @@ export interface ImplantedFirestoreStock {
   terpakai: number;
   totalQty: number;
   keterangan: string;
+  procedure?: "BIPOLAR" | "THR" | "UKA" | "TKA";
+  brand?: "NORMMED" | "ZIMMER";
+  component?: string;
   isDeleted?: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -52,11 +55,12 @@ export interface ImplantStockItem {
     used: number;
     refill: number;
     note: string;
+    procedure?: "BIPOLAR" | "THR" | "UKA" | "TKA";
+    brand?: "NORMMED" | "ZIMMER";
+    component?: string;
     createdAt?: string;
     updatedAt?: string;
   }
-  
-  
 
  // ✅ BASE DATA SESUAI HEADER EXCEL BARU
 export interface ImplantStockItemBase {
@@ -69,10 +73,12 @@ export interface ImplantStockItemBase {
     used: number;       // TERPAKAI
     refill: number;     // REFILL
     note: string;       // KET.
+    procedure?: "BIPOLAR" | "THR" | "UKA" | "TKA";
+    brand?: "NORMMED" | "ZIMMER";
+    component?: string;
     createdAt?: string;
     updatedAt?: string;
   }
-  
   // ✅ FIRESTORE DOC
   export interface ImplantStockItem extends ImplantStockItemBase {
     id: string;
@@ -104,4 +110,3 @@ export interface ImplantStockItemBase {
     REFILL: number;
     KET: string;
   }
-  

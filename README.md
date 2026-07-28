@@ -1,4 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# NEX Stock Implant
+
+Aplikasi manajemen stok implant dan customer mapping berbasis Next.js,
+Google Sheets, dan Google Apps Script.
+
+## Google Apps Script
+
+Seluruh backend Google Sheets berada dalam satu file:
+
+[`docs/appscript.gs`](docs/appscript.gs)
+
+File tersebut menangani:
+
+- CRUD, mutasi, duplikasi, dan histori stok;
+- klasifikasi implant dan brand;
+- scanner lookup, KPI, serta sinkronisasi total stok;
+- import external sheet;
+- backup dan export PDF;
+- Customer Mapping dan Customer Usage History.
+
+Untuk deployment:
+
+1. Salin seluruh isi `docs/appscript.gs` ke project Google Apps Script.
+2. Pilih **Deploy → Manage deployments → Edit**.
+3. Buat versi baru dan deploy sebagai Web App.
+4. Pastikan URL deployment yang digunakan pada environment aplikasi adalah URL terbaru.
+
+Endpoint `GET ?action=capabilities` dapat digunakan untuk memeriksa versi dan
+fitur Apps Script yang sedang aktif.
+
+Semua sheet dan header dibuat otomatis setiap kali spreadsheet dibuka:
+`Sheet1`, `History`, `CustomerMapping`, `CustomerHistory`, dan
+`CustomerUsageHistory`. Menu **NEX Stock → Siapkan Semua Sheet & Header** atau
+endpoint `GET ?action=setupSheet` dapat digunakan untuk menjalankannya secara
+manual.
+
+### Logika pergerakan stok
+
+- `Qty` adalah stok aktual dan `TotalQty` selalu mengikuti `Qty`.
+- Refill menambah `Qty` dan akumulasi `REFILL`.
+- Terpakai operasi mengurangi `Qty` dan menambah akumulasi `TERPAKAI`.
+- Mobilisasi keluar mengurangi `Qty` tanpa menambah `TERPAKAI`.
+- Mobilisasi masuk menambah `Qty` tanpa menambah `REFILL`.
+- Setiap pergerakan wajib memiliki keterangan dan otomatis dicatat pada `KET`
+  serta sheet `History`.
 
 ## Getting Started
 

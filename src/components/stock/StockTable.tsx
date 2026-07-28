@@ -6,6 +6,12 @@ import { ImplantStockItem } from "@/types/implant-stock";
 import { StockFilter } from "./StockFilter";
 import { EditStockModal } from "./EditStockModal";
 import Scanner from "./Scanner";
+import {
+  IMPLANT_BRANDS,
+  IMPLANT_MASTER_DATA,
+  IMPLANT_PROCEDURES,
+  inferImplantClassification,
+} from "@/lib/implantCatalog";
 
 interface StockTableProps {
   reloadKey?: number;
@@ -26,6 +32,9 @@ interface CreateFormState {
   refill: number;
   used: number;
   note: string;
+  procedure: string;
+  brand: string;
+  component: string;
 }
 
 const INITIAL_CREATE_FORM: CreateFormState = {
@@ -36,6 +45,9 @@ const INITIAL_CREATE_FORM: CreateFormState = {
   refill: 0,
   used: 0,
   note: "",
+  procedure: "",
+  brand: "",
+  component: "",
 };
 
 function normalizeToken(value: string) {
@@ -65,6 +77,8 @@ export default function StockTable({ reloadKey }: StockTableProps) {
 
   const [keyword, setKeyword] = useState("");
   const [batch, setBatch] = useState("");
+  const [procedure, setProcedure] = useState("");
+  const [brand, setBrand] = useState("");
 
   const [editingItem, setEditingItem] = useState<ImplantStockItem | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -106,6 +120,9 @@ export default function StockTable({ reloadKey }: StockTableProps) {
   }, [reloadKey]);
 
   const handleDelete = async (id: string) => {
+    if (!window.confirm("Arsipkan item stok ini? Data histori tetap disimpan.")) {
+      return;
+    }
     await fetch(`/api/implant-stock/${id}`, { method: "DELETE" });
     loadData();
   };
@@ -172,6 +189,9 @@ export default function StockTable({ reloadKey }: StockTableProps) {
         refill: 0,
         used: 0,
         note: matched.note ?? "",
+        procedure: matched.procedure ?? "",
+        brand: matched.brand ?? "",
+        component: matched.component ?? "",
       });
       setScanMessage("Stok ditemukan. Anda bisa tambah kuantitas langsung.");
       return;
@@ -186,6 +206,9 @@ export default function StockTable({ reloadKey }: StockTableProps) {
       refill: 0,
       used: 0,
       note: expText ? `EXP ${expText}` : "",
+      procedure: "",
+      brand: "",
+      component: "",
     });
     setScanMessage("Stok belum ada. Isi deskripsi lalu tambahkan item baru.");
   };
@@ -252,6 +275,9 @@ export default function StockTable({ reloadKey }: StockTableProps) {
         refill: toSafeNumber(createForm.refill),
         used: toSafeNumber(createForm.used),
         note: createForm.note.trim(),
+        procedure: createForm.procedure,
+        brand: createForm.brand,
+        component: createForm.component.trim(),
       };
 
       const res = await fetch("/api/implant-stock", {
@@ -283,11 +309,27 @@ export default function StockTable({ reloadKey }: StockTableProps) {
     }
   };
 
-  const filtered = data.filter((item) => {
-    return (
-      item.description.toLowerCase().includes(keyword.toLowerCase()) &&
-      item.batch.toLowerCase().includes(batch.toLowerCase())
+  const classifiedData = data.map((item) => {
+    const inferred = inferImplantClassification(
+      item.procedure,
+      item.brand,
+      item.description,
+      item.stockNo,
+      item.note
     );
+    return {
+      ...item,
+      procedure: item.procedure ?? inferred.procedure,
+      brand: item.brand ?? inferred.brand,
+    };
+  });
+
+  const filtered = classifiedData.filter((item) => {
+    const haystack = `${item.stockNo} ${item.description} ${item.component ?? ""}`.toLowerCase();
+    return haystack.includes(keyword.toLowerCase()) &&
+      item.batch.toLowerCase().includes(batch.toLowerCase()) &&
+      (!procedure || item.procedure === procedure) &&
+      (!brand || item.brand === brand);
   });
 
   return (
@@ -295,9 +337,35 @@ export default function StockTable({ reloadKey }: StockTableProps) {
       <StockFilter
         implant={keyword}
         batch={batch}
+        procedure={procedure}
+        brand={brand}
         setImplant={setKeyword}
         setBatch={setBatch}
+        setProcedure={setProcedure}
+        setBrand={setBrand}
+        resultCount={filtered.length}
       />
+
+      <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {IMPLANT_PROCEDURES.map((item) => {
+          const rows = classifiedData.filter((row) => row.procedure === item);
+          const total = rows.reduce((sum, row) => sum + Number(row.totalQty || 0), 0);
+          return (
+            <button
+              type="button"
+              key={item}
+              onClick={() => setProcedure(procedure === item ? "" : item)}
+              className={`rounded-xl border p-3 text-left transition ${
+                procedure === item ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30" : "hover:border-zinc-400"
+              }`}
+            >
+              <div className="text-xs text-zinc-500">Implant</div>
+              <div className="font-semibold">{item}</div>
+              <div className="mt-1 text-xs">{rows.length} item · stok {total}</div>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="mb-4 rounded-xl border p-3 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -391,6 +459,47 @@ export default function StockTable({ reloadKey }: StockTableProps) {
                       placeholder="No Stok"
                       className="rounded-lg border px-3 py-2 text-sm"
                     />
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={createForm.procedure}
+                        onChange={(e) => setCreateForm((prev) => ({
+                          ...prev,
+                          procedure: e.target.value,
+                          component: "",
+                        }))}
+                        className="rounded-lg border px-3 py-2 text-sm"
+                      >
+                        <option value="">Pilih jenis implant</option>
+                        {IMPLANT_PROCEDURES.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                      <select
+                        value={createForm.brand}
+                        onChange={(e) => setCreateForm((prev) => ({
+                          ...prev,
+                          brand: e.target.value,
+                          component: "",
+                        }))}
+                        className="rounded-lg border px-3 py-2 text-sm"
+                      >
+                        <option value="">Pilih brand</option>
+                        {IMPLANT_BRANDS.map((item) => <option key={item}>{item}</option>)}
+                      </select>
+                    </div>
+                    <select
+                      value={createForm.component}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, component: e.target.value }))}
+                      className="rounded-lg border px-3 py-2 text-sm"
+                      disabled={!createForm.procedure || !createForm.brand}
+                    >
+                      <option value="">Pilih komponen</option>
+                      {createForm.procedure && createForm.brand
+                        ? IMPLANT_MASTER_DATA[
+                            createForm.procedure as keyof typeof IMPLANT_MASTER_DATA
+                          ][createForm.brand as keyof (typeof IMPLANT_MASTER_DATA)["THR"]].map(
+                            (item) => <option key={item}>{item}</option>
+                          )
+                        : null}
+                    </select>
                     <input
                       value={createForm.description}
                       onChange={(e) =>
@@ -495,6 +604,7 @@ export default function StockTable({ reloadKey }: StockTableProps) {
                 <th className="px-2 py-2">NO</th>
                 <th className="px-2 py-2">No Stok</th>
                 <th className="px-2 py-2">Deskripsi</th>
+                <th className="px-2 py-2">Jenis / Brand</th>
                 <th className="px-2 py-2">Batch</th>
                 <th className="px-2 py-2">Qty</th>
                 <th className="px-2 py-2">Total Qty</th>
@@ -511,6 +621,17 @@ export default function StockTable({ reloadKey }: StockTableProps) {
                   <td className="px-2 py-1">{item.no}</td>
                   <td className="px-2 py-1">{item.stockNo}</td>
                   <td className="px-2 py-1">{item.description}</td>
+                  <td className="px-2 py-1">
+                    <div className="flex flex-wrap gap-1">
+                      <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                        {item.procedure || "Belum diklasifikasi"}
+                      </span>
+                      <span className="rounded bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                        {item.brand || "Brand belum diisi"}
+                      </span>
+                    </div>
+                    {item.component ? <div className="mt-1 text-xs text-zinc-500">{item.component}</div> : null}
+                  </td>
                   <td className="px-2 py-1">{item.batch}</td>
                   <td className="px-2 py-1">{item.qty}</td>
                   <td className="px-2 py-1">{item.totalQty}</td>
@@ -528,7 +649,7 @@ export default function StockTable({ reloadKey }: StockTableProps) {
                       onClick={() => handleDelete(item.id)}
                       className="text-xs text-red-600 hover:underline"
                     >
-                      Delete
+                      Arsipkan
                     </button>
                   </td>
                 </tr>
@@ -537,7 +658,7 @@ export default function StockTable({ reloadKey }: StockTableProps) {
               {filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={11}
                     className="px-2 py-4 text-center text-xs text-zinc-500"
                   >
                     Tidak ada data.

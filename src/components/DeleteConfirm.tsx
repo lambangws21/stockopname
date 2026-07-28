@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useStockMutation } from "@/hooks/useStockMutation";
 import { StockRow } from "@/types/stock";
 import type { GasSheetContext } from "@/lib/gas";
+import { LoaderCircle } from "lucide-react";
 
 interface DeleteConfirmModalProps {
   open: boolean;
@@ -78,7 +79,12 @@ export default function DeleteConfirmModal({
             onClick={submit}
             disabled={loading}
           >
-            {loading ? "Menghapus..." : "Hapus"}
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <LoaderCircle size={15} className="animate-spin" />
+                Menghapus…
+              </span>
+            ) : "Hapus"}
           </button>
         </div>
       </div>

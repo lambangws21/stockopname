@@ -14,12 +14,14 @@ export default function ImplantStockPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <main className="min-h-screen bg-zinc-50 p-4 md:p-6 dark:bg-zinc-950">
+      <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Stok Implant</h1>
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Inventory</div>
+          <h1 className="text-2xl font-bold tracking-tight">Stok Implant</h1>
           <p className="text-xs text-zinc-500">
-            Upload stok dari Excel, lihat summary, dan kelola stok implant.
+            Kelola stok berdasarkan jenis implant, brand, komponen, dan batch.
           </p>
         </div>
         <UploadStockExcel onUploaded={triggerReload} />
@@ -31,6 +33,7 @@ export default function ImplantStockPage() {
       </div>
 
       <StockTable reloadKey={reloadKey} />
-    </div>
+      </div>
+    </main>
   );
 }

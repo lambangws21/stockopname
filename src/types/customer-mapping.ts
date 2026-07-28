@@ -42,4 +42,8 @@ export interface CustomerMappingRow {
   implantUsed: string;
   procedureType: string;
   usageHospital: string;
+  monthlyCaseCount: number;
+  orthopedicCaseTypes: string;
+  implantVendors: string;
+  vendorSupport: string;
 }

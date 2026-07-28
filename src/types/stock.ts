@@ -1,8 +1,12 @@
+import type { StockImplantCategory } from "@/lib/stockCategories";
+
 // Baris data utama
 export interface StockRow {
     No: number;
     NoStok: string;
     Deskripsi: string;
+    Implant: StockImplantCategory | "";
+    Brand: "ZIMMER" | "NORMMED" | "";
     Batch: string;
     Qty: number;
     TotalQty: number;
@@ -43,6 +47,8 @@ export interface StockRow {
       No?: number;
       NoStok?: string;
       Deskripsi?: string;
+      Implant?: StockImplantCategory | "";
+      Brand?: "ZIMMER" | "NORMMED" | "";
       Batch?: string;
       Qty?: number;
       TotalQty?: number;
@@ -66,6 +72,8 @@ export interface StockRow {
     No: number;
     NoStok: string;
     Deskripsi: string;
+    Implant: StockImplantCategory | "";
+    Brand: "ZIMMER" | "NORMMED" | "";
     Batch: string;
     Qty: number;
     TotalQty: number;
@@ -107,6 +115,8 @@ export interface StockRow {
   No: number;
   NoStok: string;
   Deskripsi: string;
+  Implant: StockImplantCategory | "";
+  Brand: "ZIMMER" | "NORMMED" | "";
   Batch: string;
   Qty: number;
   TotalQty: number;
@@ -137,6 +147,8 @@ export interface BasePayload {
 export interface CreatePayload extends BasePayload {
   NoStok: string;
   Deskripsi: string;
+  Implant: StockImplantCategory | "";
+  Brand: "ZIMMER" | "NORMMED" | "";
   Batch: string;
   Qty: number;
   TERPAKAI: number;
@@ -159,6 +171,12 @@ export interface MutasiPayload extends BasePayload {
   No: number;
   qty: number;
   type: "in" | "out";
+  movementReason:
+    | "REFILL"
+    | "OPERASI"
+    | "MOBILISASI_KELUAR"
+    | "MOBILISASI_MASUK";
+  note: string;
 }
 
 /* ================= DUPLICATE ================= */

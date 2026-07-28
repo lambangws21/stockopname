@@ -5,6 +5,81 @@ const GAS_DEFAULT_URL =
   "https://script.google.com/macros/s/AKfycbzYixMvNT2jkoKl-P0973ijFkM0XCQRb8oEMyFKTB-BmbKd_HyirtYvdgO-v84xgVF3mA/exec";
 const GAS_EXTERNAL_URL = process.env.GAS_SUPER_SHEET_EXTERNAL_URL || "";
 
+class GasProxyError extends Error {
+  status: number;
+
+  constructor(message: string, status = 502) {
+    super(message);
+    this.name = "GasProxyError";
+    this.status = status;
+  }
+}
+
+async function fetchGasJson(
+  url: string,
+  init?: RequestInit,
+  retrySafe = false
+) {
+  const attempts = retrySafe ? 2 : 1;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25_000);
+
+    try {
+      const response = await fetch(url, {
+        ...init,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const text = await response.text();
+
+      if (!response.ok) {
+        throw new GasProxyError(
+          `Google Apps Script merespons HTTP ${response.status}`,
+          response.status >= 500 ? 502 : response.status
+        );
+      }
+
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        const isHtml = /<!doctype|<html/i.test(text);
+        throw new GasProxyError(
+          isHtml
+            ? "Google Apps Script mengembalikan halaman HTML. Pastikan Web App sudah di-deploy dan aksesnya diatur ke Anyone."
+            : "Respons Google Apps Script bukan JSON yang valid."
+        );
+      }
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= attempts) break;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  if (lastError instanceof GasProxyError) throw lastError;
+  if (lastError instanceof Error && lastError.name === "AbortError") {
+    throw new GasProxyError("Koneksi ke Google Apps Script timeout.");
+  }
+  throw new GasProxyError(
+    lastError instanceof Error
+      ? `Google Apps Script tidak dapat dihubungi: ${lastError.message}`
+      : "Google Apps Script tidak dapat dihubungi."
+  );
+}
+
+function gasErrorResponse(error: unknown) {
+  const status = error instanceof GasProxyError ? error.status : 500;
+  const message =
+    error instanceof Error ? error.message : "Terjadi kesalahan pada server.";
+
+  console.error("[super-sheet]", error);
+  return NextResponse.json({ status: "error", message }, { status });
+}
+
 function hasExternalParams(params: URLSearchParams) {
   return Boolean(
     params.get("sourceUrl") ||
@@ -64,48 +139,39 @@ function scoreMatch(
 }
 
 export async function GET(req: NextRequest) {
-  const action = req.nextUrl.searchParams.get("action");
-  const gasUrl = pickGasUrlForGet(req);
+  try {
+    const action = req.nextUrl.searchParams.get("action");
+    const gasUrl = pickGasUrlForGet(req);
 
-  if (action === "scanLookup") {
-    const sheet = req.nextUrl.searchParams.get("sheet") || "Sheet1";
-    const refRaw = req.nextUrl.searchParams.get("ref") || "";
-    const lotRaw = req.nextUrl.searchParams.get("lot") || "";
-    const sourceUrl = req.nextUrl.searchParams.get("sourceUrl") || "";
-    const sourceId = req.nextUrl.searchParams.get("sourceId") || "";
-    const sourceSheet = req.nextUrl.searchParams.get("sourceSheet") || "";
-    const sourceGid = req.nextUrl.searchParams.get("sourceGid") || "";
-    const ref = normalizeToken(refRaw);
-    const lot = normalizeToken(lotRaw);
+    if (action === "scanLookup") {
+      const sheet = req.nextUrl.searchParams.get("sheet") || "Sheet1";
+      const refRaw = req.nextUrl.searchParams.get("ref") || "";
+      const lotRaw = req.nextUrl.searchParams.get("lot") || "";
+      const sourceUrl = req.nextUrl.searchParams.get("sourceUrl") || "";
+      const sourceId = req.nextUrl.searchParams.get("sourceId") || "";
+      const sourceSheet = req.nextUrl.searchParams.get("sourceSheet") || "";
+      const sourceGid = req.nextUrl.searchParams.get("sourceGid") || "";
+      const ref = normalizeToken(refRaw);
+      const lot = normalizeToken(lotRaw);
 
-    if (!ref) {
-      return NextResponse.json(
-        { status: "error", message: "Missing ref for scanLookup" },
-        { status: 400 }
-      );
-    }
+      if (!ref) {
+        return NextResponse.json(
+          { status: "error", message: "Missing ref for scanLookup" },
+          { status: 400 }
+        );
+      }
 
-    const upstreamQuery = new URLSearchParams({
-      sheet,
-    });
-    if (sourceUrl) upstreamQuery.set("sourceUrl", sourceUrl);
-    if (sourceId) upstreamQuery.set("sourceId", sourceId);
-    if (sourceSheet) upstreamQuery.set("sourceSheet", sourceSheet);
-    if (sourceGid) upstreamQuery.set("sourceGid", sourceGid);
+      const upstreamQuery = new URLSearchParams({ sheet });
+      if (sourceUrl) upstreamQuery.set("sourceUrl", sourceUrl);
+      if (sourceId) upstreamQuery.set("sourceId", sourceId);
+      if (sourceSheet) upstreamQuery.set("sourceSheet", sourceSheet);
+      if (sourceGid) upstreamQuery.set("sourceGid", sourceGid);
 
-    const source = await fetch(
-      `${gasUrl}?${upstreamQuery.toString()}`,
-      { cache: "no-store" }
-    );
-
-    if (!source.ok) {
-      return NextResponse.json(
-        { status: "error", message: `GAS Error ${source.status}` },
-        { status: source.status }
-      );
-    }
-
-    const raw = await source.json();
+      const raw = (await fetchGasJson(
+        `${gasUrl}?${upstreamQuery.toString()}`,
+        undefined,
+        true
+      )) as { data?: Array<Record<string, unknown>> };
     const rows = Array.isArray(raw?.data)
       ? (raw.data as Array<Record<string, unknown>>)
       : [];
@@ -115,57 +181,68 @@ export async function GET(req: NextRequest) {
       .filter((item) => item._score > 0)
       .sort((a, b) => b._score - a._score);
 
-    return NextResponse.json({
-      status: "success",
-      found: ranked.length > 0,
-      best: ranked.length > 0 ? { ...ranked[0].row, _score: ranked[0]._score } : null,
-      data: ranked.slice(0, 20).map((item) => ({ ...item.row, _score: item._score })),
-      query: { sheet, ref: refRaw, lot: lotRaw, sourceUrl, sourceId, sourceSheet, sourceGid },
-    });
-  }
+      return NextResponse.json({
+        status: "success",
+        found: ranked.length > 0,
+        best: ranked.length > 0 ? { ...ranked[0].row, _score: ranked[0]._score } : null,
+        data: ranked.slice(0, 20).map((item) => ({ ...item.row, _score: item._score })),
+        query: { sheet, ref: refRaw, lot: lotRaw, sourceUrl, sourceId, sourceSheet, sourceGid },
+      });
+    }
 
-  const qs = req.nextUrl.searchParams.toString();
-  const res = await fetch(`${gasUrl}?${qs}`, { cache: "no-store" });
-  return NextResponse.json(await res.json());
+    const qs = req.nextUrl.searchParams.toString();
+    return NextResponse.json(
+      await fetchGasJson(`${gasUrl}?${qs}`, undefined, true)
+    );
+  } catch (error) {
+    return gasErrorResponse(error);
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as Record<string, unknown>;
-  const gasUrl = pickGasUrlForBody(body);
-  const res = await fetch(gasUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return NextResponse.json(await res.json());
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const gasUrl = pickGasUrlForBody(body);
+    return NextResponse.json(await fetchGasJson(gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+  } catch (error) {
+    return gasErrorResponse(error);
+  }
 }
 
 export async function PUT(req: NextRequest) {
-  const body = (await req.json()) as Record<string, unknown>;
-  const gasUrl = pickGasUrlForBody(body);
-
-  const res = await fetch(gasUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sheet: body.sheet ?? "Sheet1",
-      No: body.No,
-      ...body,
-      methodOverride: "PUT",
-    }),
-  });
-
-  return NextResponse.json(await res.json());
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const gasUrl = pickGasUrlForBody(body);
+    return NextResponse.json(await fetchGasJson(gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sheet: body.sheet ?? "Sheet1",
+        No: body.No,
+        ...body,
+        methodOverride: "PUT",
+      }),
+    }));
+  } catch (error) {
+    return gasErrorResponse(error);
+  }
 }
 
 
 export async function DELETE(req: NextRequest) {
-  const body = (await req.json()) as Record<string, unknown>;
-  const gasUrl = pickGasUrlForBody(body);
-  const res = await fetch(gasUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...body, methodOverride: "DELETE" }),
-  });
-  return NextResponse.json(await res.json());
+  try {
+    const body = (await req.json()) as Record<string, unknown>;
+    const gasUrl = pickGasUrlForBody(body);
+    return NextResponse.json(await fetchGasJson(gasUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, methodOverride: "DELETE" }),
+    }));
+  } catch (error) {
+    return gasErrorResponse(error);
+  }
 }

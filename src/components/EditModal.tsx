@@ -2,13 +2,17 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, CheckCircle, AlertTriangle } from "lucide-react";
+import { X, CheckCircle, AlertTriangle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { StockRow } from "@/types/stock";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import {
+  STOCK_IMPLANT_CATEGORIES,
+  STOCK_IMPLANT_CATEGORY_LABELS,
+} from "@/lib/stockCategories";
 
 function toSafeNumber(value: unknown): number {
   if (typeof value === "number") {
@@ -32,16 +36,24 @@ function toSafeNumber(value: unknown): number {
 
 function normalizeRow(row: StockRow | null): StockRow {
   const source = row || EMPTY_ROW;
+  const latestKet =
+    String(source.KET ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) || "";
   return {
     No: toSafeNumber(source.No),
     NoStok: String(source.NoStok ?? ""),
     Deskripsi: String(source.Deskripsi ?? ""),
+    Implant: source.Implant ?? "",
+    Brand: source.Brand ?? "",
     Batch: String(source.Batch ?? ""),
     Qty: toSafeNumber(source.Qty),
     TotalQty: toSafeNumber(source.TotalQty),
     TERPAKAI: toSafeNumber(source.TERPAKAI),
     REFILL: toSafeNumber(source.REFILL),
-    KET: String(source.KET ?? ""),
+    KET: latestKet,
   };
 }
 
@@ -51,12 +63,15 @@ type Props = {
   row: StockRow | null;
   onClose: () => void;
   onSave: (row: StockRow) => Promise<void>;
+  onMovement?: (row: StockRow) => void;
 };
 
 const EMPTY_ROW: StockRow = {
   No: 0,
   NoStok: "",
   Deskripsi: "",
+  Implant: "",
+  Brand: "",
   Batch: "",
   Qty: 0,
   TotalQty: 0,
@@ -66,7 +81,13 @@ const EMPTY_ROW: StockRow = {
 };
 
 /* ================= ROOT ================= */
-export default function EditModal({ open, row, onClose, onSave }: Props) {
+export default function EditModal({
+  open,
+  row,
+  onClose,
+  onSave,
+  onMovement,
+}: Props) {
   return (
     <AnimatePresence>
       {open && (
@@ -81,6 +102,7 @@ export default function EditModal({ open, row, onClose, onSave }: Props) {
             row={row}
             onClose={onClose}
             onSave={onSave}
+            onMovement={onMovement}
           />
         </motion.div>
       )}
@@ -93,10 +115,12 @@ function ModalContent({
   row,
   onClose,
   onSave,
+  onMovement,
 }: {
   row: StockRow | null;
   onClose: () => void;
   onSave: (row: StockRow) => Promise<void>;
+  onMovement?: (row: StockRow) => void;
 }) {
   const isCreate = !row || row.No === 0;
 
@@ -106,10 +130,7 @@ function ModalContent({
   const [shake, setShake] = useState(false);
 
   /* ================= AUTO CALC ================= */
-  const calculatedTotalQty =
-    toSafeNumber(form.Qty) +
-    toSafeNumber(form.REFILL) -
-    toSafeNumber(form.TERPAKAI);
+  const calculatedTotalQty = toSafeNumber(form.Qty);
 
   useEffect(() => {
     if (form.TotalQty !== calculatedTotalQty) {
@@ -212,6 +233,34 @@ function ModalContent({
               onChange={(v) => setForm({ ...form, Deskripsi: v })}
             />
 
+            <div className="grid grid-cols-2 gap-3">
+              <SelectField
+                label="Implant"
+                value={form.Implant}
+                options={STOCK_IMPLANT_CATEGORIES.map((category) => ({
+                  value: category,
+                  label: STOCK_IMPLANT_CATEGORY_LABELS[category],
+                }))}
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    Implant: v as StockRow["Implant"],
+                  })
+                }
+              />
+              <SelectField
+                label="Brand"
+                value={form.Brand}
+                options={["ZIMMER", "NORMMED"]}
+                onChange={(v) =>
+                  setForm({
+                    ...form,
+                    Brand: v as StockRow["Brand"],
+                  })
+                }
+              />
+            </div>
+
             <Field
               label="Batch / LOT"
               value={form.Batch}
@@ -220,7 +269,7 @@ function ModalContent({
 
             <div className="grid grid-cols-2 gap-3">
               <NumberField
-                label="Qty"
+                label="Qty / Stok Aktual"
                 value={form.Qty}
                 onChange={(v) => setForm({ ...form, Qty: v })}
               />
@@ -238,7 +287,7 @@ function ModalContent({
               />
 
               <div className="space-y-1">
-                <Label>Total Qty (Auto)</Label>
+                <Label>Total Qty (Mengikuti Qty)</Label>
                 <Input value={toSafeNumber(form.TotalQty)} disabled />
               </div>
             </div>
@@ -278,22 +327,35 @@ function ModalContent({
       </div>
 
       {/* FOOTER */}
-      <div className="px-5 py-3 border-t flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2 border-t px-5 py-3">
         {step === "edit" ? (
           <>
+            {!isCreate && onMovement ? (
+              <Button
+                variant="outline"
+                className="mr-auto w-full border-blue-200 text-blue-700 hover:bg-blue-50 sm:w-auto"
+                onClick={() => {
+                  onClose();
+                  onMovement(row || form);
+                }}
+              >
+                <RefreshCcw size={15} className="mr-1.5" />
+                Pergerakan Stok
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              Batal
             </Button>
             <Button
               onClick={() => (isCreate ? handleSave() : setStep("approve"))}
             >
-              {isCreate ? "Save" : "Review Changes"}
+              {isCreate ? "Simpan" : "Review Perubahan"}
             </Button>
           </>
         ) : (
           <>
             <Button variant="outline" onClick={() => setStep("edit")}>
-              Back
+              Kembali
             </Button>
             <Button
               onClick={handleSave}
@@ -301,7 +363,7 @@ function ModalContent({
               className="bg-green-600 hover:bg-green-700"
             >
               <CheckCircle size={16} className="mr-1" />
-              {saving ? "Saving..." : "Approve & Save"}
+              {saving ? "Menyimpan..." : "Setujui & Simpan"}
             </Button>
           </>
         )}
@@ -325,6 +387,42 @@ function Field({
     <div className="space-y-1">
       <Label>{label}</Label>
       <Input value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<string | { value: string; label: string }>;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+      >
+        <option value="">Pilih {label}</option>
+        {options.map((option) => {
+          const optionValue =
+            typeof option === "string" ? option : option.value;
+          const optionLabel =
+            typeof option === "string" ? option : option.label;
+          return (
+            <option key={optionValue} value={optionValue}>
+              {optionLabel}
+            </option>
+          );
+        })}
+      </select>
     </div>
   );
 }

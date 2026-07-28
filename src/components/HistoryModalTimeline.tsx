@@ -7,7 +7,7 @@ import { useStockHistory } from "@/hooks/useStockHistory";
 import { HistoryRow } from "@/types/history";
 import { parseChanges, badge } from "@/lib/history";
 
-const IMPORTANT_FIELDS = ["Qty", "TotalQty", "TERPAKAI", "REFILL"];
+const IMPORTANT_FIELDS = ["Qty", "TotalQty", "TERPAKAI", "REFILL", "KET"];
 
 type Props = {
   open: boolean;
@@ -47,7 +47,7 @@ export default function HistoryModalTimeline({
             <div className="cursor-move px-5 py-3 border-b flex justify-between items-center">
               <h2 className="font-bold text-sm flex items-center gap-2">
                 <GitCommit size={16} />
-                History Timeline • No #{No}
+                Riwayat Pergerakan • Baris #{No}
               </h2>
               <button onClick={onClose} className="hover:text-red-500">
                 <X size={18} />
@@ -129,7 +129,7 @@ export default function HistoryModalTimeline({
                               className="px-3 pb-3"
                             >
                               <div className="text-zinc-500 mb-2">
-                                Sheet <b>{h.Sheet}</b> • No #{h.No}
+                                Sheet <b>{h.Sheet}</b> • Baris #{h.No}
                               </div>
 
                               {changes.length === 0 ? (

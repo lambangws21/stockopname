@@ -9,6 +9,7 @@ const EXTERNAL_SOURCE_GID_DEFAULT = "505336972";
 const EXTERNAL_TARGET_SHEET_DEFAULT = "ExternalImport";
 const CUSTOMER_SHEET = "CustomerMapping";
 const CUSTOMER_HISTORY_SHEET = "CustomerHistory";
+const CUSTOMER_USAGE_SHEET = "CustomerUsageHistory";
 const DOCTOR_PHOTO_FOLDER_ID = "1_y8hc--3PdA-_t07lW1p_TO7VDuSky47";
 
 const CUSTOMER_HEADERS = [
@@ -45,12 +46,38 @@ const CUSTOMER_HEADERS = [
   "ImplantUsed",
   "ProcedureType",
   "UsageHospital",
+  "MonthlyCaseCount",
+  "OrthopedicCaseTypes",
+  "ImplantVendors",
+  "VendorSupport",
+];
+
+const CUSTOMER_USAGE_HEADERS = [
+  "UsageID",
+  "Timestamp",
+  "CustomerID",
+  "Doctor",
+  "CustomerType",
+  "Territory",
+  "Hospital",
+  "ProductUsed",
+  "ProcedureType",
+  "UsageType",
+  "UsageSequence",
+  "ProductOffered",
+  "Note",
+  "Planning",
+  "Outcome",
+  "Owner",
+  "RecordedBy",
 ];
 
 const MASTER_HEADERS = [
   "No",
   "NoStok",
   "Deskripsi",
+  "Implant",
+  "Brand",
   "Batch",
   "Qty",
   "TotalQty",
@@ -194,6 +221,21 @@ function normalizeSheet(sheet) {
     return;
   }
 
+  const existingHeaders = sheet
+    .getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1))
+    .getValues()[0];
+
+  // Migrasi aman dari format 9 kolom: sisipkan Implant dan Brand,
+  // sehingga data Batch/Qty lama tidak tertimpa atau bergeser salah.
+  if (
+    existingHeaders[0] === "No" &&
+    existingHeaders[1] === "NoStok" &&
+    existingHeaders[2] === "Deskripsi" &&
+    existingHeaders[3] === "Batch"
+  ) {
+    sheet.insertColumnsAfter(3, 2);
+  }
+
   const current = sheet.getRange(1, 1, 1, MASTER_HEADERS.length).getValues()[0];
   const fixed = MASTER_HEADERS.map(function (h, i) {
     return current[i] === h ? current[i] : h;
@@ -237,13 +279,13 @@ function parseRows(rows) {
 function syncTotalQty(sheet) {
   const rows = sheet.getDataRange().getValues();
   for (var i = 1; i < rows.length; i++) {
-    const qty = safeNumber(rows[i][4]);
-    const used = safeNumber(rows[i][6]);
-    const refill = safeNumber(rows[i][7]);
+    const qty = safeNumber(rows[i][6]);
+    const used = safeNumber(rows[i][8]);
+    const refill = safeNumber(rows[i][9]);
     const total = qty + refill - used;
 
-    if (safeNumber(rows[i][5]) !== total) {
-      sheet.getRange(i + 1, 6).setValue(total);
+    if (safeNumber(rows[i][7]) !== total) {
+      sheet.getRange(i + 1, 8).setValue(total);
     }
   }
 }
@@ -398,7 +440,7 @@ function generateKPI(sheetName, input) {
 
   for (var i = 1; i < rows.length; i++) {
     const noStok = rows[i][1];
-    const totalQty = safeNumber(rows[i][5]);
+    const totalQty = safeNumber(rows[i][7]);
 
     if (String(noStok).trim()) totalItems++;
     sumStock += totalQty;
@@ -505,6 +547,8 @@ function handleCreate(body) {
     no,
     payload.NoStok || "",
     payload.Deskripsi || "",
+    payload.Implant || "",
+    payload.Brand || "",
     payload.Batch || "",
     safeNumber(payload.Qty),
     0,
@@ -513,7 +557,7 @@ function handleCreate(body) {
     payload.KET || "",
   ];
 
-  row[5] = safeNumber(row[4]) + safeNumber(row[7]) - safeNumber(row[6]);
+  row[7] = safeNumber(row[6]) + safeNumber(row[9]) - safeNumber(row[8]);
   sheet.appendRow(row);
 
   logHistory("CREATE", sheet.getName(), no, {}, rowArrayToObject(row), payload.by);
@@ -538,6 +582,8 @@ function handleUpdate(body) {
 
   const nextNoStok = hasOwn(payload, "NoStok") ? payload.NoStok : before.NoStok;
   const nextDesc = hasOwn(payload, "Deskripsi") ? payload.Deskripsi : before.Deskripsi;
+  const nextImplant = hasOwn(payload, "Implant") ? payload.Implant : before.Implant;
+  const nextBrand = hasOwn(payload, "Brand") ? payload.Brand : before.Brand;
   const nextBatch = hasOwn(payload, "Batch") ? payload.Batch : before.Batch;
   const nextQty = hasOwn(payload, "Qty") ? payload.Qty : before.Qty;
   const nextUsed = hasOwn(payload, "TERPAKAI") ? payload.TERPAKAI : before.TERPAKAI;
@@ -548,6 +594,8 @@ function handleUpdate(body) {
     no,
     nextNoStok || "",
     nextDesc || "",
+    nextImplant || "",
+    nextBrand || "",
     nextBatch || "",
     safeNumber(nextQty),
     0,
@@ -555,7 +603,7 @@ function handleUpdate(body) {
     safeNumber(nextRefill),
     nextKet || "",
   ];
-  updated[5] = safeNumber(updated[4]) + safeNumber(updated[7]) - safeNumber(updated[6]);
+  updated[7] = safeNumber(updated[6]) + safeNumber(updated[9]) - safeNumber(updated[8]);
 
   sheet.getRange(idx + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
   const after = rowArrayToObject(updated);
@@ -602,9 +650,9 @@ function handleMutasi(body) {
   const before = rowArrayToObject(old);
   const type = String(payload.type || "").toLowerCase();
 
-  const baseQty = safeNumber(old[4]);
-  let used = safeNumber(old[6]);
-  let refill = safeNumber(old[7]);
+  const baseQty = safeNumber(old[6]);
+  let used = safeNumber(old[8]);
+  let refill = safeNumber(old[9]);
   const totalBefore = baseQty + refill - used;
 
   if (type === "in") {
@@ -619,10 +667,10 @@ function handleMutasi(body) {
   }
 
   const updated = old.slice();
-  updated[4] = baseQty;
-  updated[6] = used;
-  updated[7] = refill;
-  updated[5] = baseQty + refill - used;
+  updated[6] = baseQty;
+  updated[8] = used;
+  updated[9] = refill;
+  updated[7] = baseQty + refill - used;
 
   sheet.getRange(idx + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
   logHistory(
@@ -634,7 +682,7 @@ function handleMutasi(body) {
     payload.by
   );
 
-  return { status: "success", No: no, newQty: safeNumber(updated[5]) };
+  return { status: "success", No: no, newQty: safeNumber(updated[7]) };
 }
 
 function handleDuplicate(body) {
@@ -714,6 +762,16 @@ function normalizeCustomerEnum(value, allowed, fallback) {
   return allowed.indexOf(normalized) >= 0 ? normalized : fallback;
 }
 
+function calculatePotentialPriority(monthlyCaseCount, orthopedicCaseTypes, fallback) {
+  const count = safeNumber(monthlyCaseCount);
+  const cases = normalizeCustomerValue(orthopedicCaseTypes).toLowerCase();
+  const hasArthroplasty = cases.indexOf("artroplasty hip") >= 0 || cases.indexOf("artroplasty knee") >= 0;
+  const hasTraumaOrScope = cases.indexOf("trauma") >= 0 || cases.indexOf("artroscopy") >= 0;
+  if (count > 5 && hasArthroplasty) return "HIGH";
+  if (hasTraumaOrScope || (count > 0 && hasArthroplasty)) return "MEDIUM";
+  return normalizeCustomerEnum(fallback, ["HIGH", "MEDIUM", "LOW"], "LOW");
+}
+
 function customerKey(item) {
   return [item.CustomerType, item.Territory, item.Hospital, item.Doctor]
     .map(function (value) {
@@ -759,6 +817,33 @@ function getCustomerHistorySheet() {
   return sheet;
 }
 
+function getCustomerUsageSheet() {
+  const sheet = getOrCreateSheet(CUSTOMER_USAGE_SHEET);
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, CUSTOMER_USAGE_HEADERS.length).setValues([CUSTOMER_USAGE_HEADERS]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, CUSTOMER_USAGE_HEADERS.length)
+      .setBackground("#047857")
+      .setFontColor("#ffffff")
+      .setFontWeight("bold");
+    sheet.getRange("B:B").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+    return sheet;
+  }
+  sheet.getRange(1, 1, 1, CUSTOMER_USAGE_HEADERS.length).setValues([CUSTOMER_USAGE_HEADERS]);
+  return sheet;
+}
+
+function listCustomerUsage() {
+  const sheet = getCustomerUsageSheet();
+  const values = sheet.getDataRange().getValues();
+  const data = values.slice(1).map(function (row) {
+    const item = {};
+    CUSTOMER_USAGE_HEADERS.forEach(function (header, index) { item[header] = row[index]; });
+    return item;
+  });
+  return { status: "success", data: data, total: data.length, sheet: CUSTOMER_USAGE_SHEET };
+}
+
 function customerArrayToObject(row) {
   const item = {};
   CUSTOMER_HEADERS.forEach(function (header, index) {
@@ -802,6 +887,10 @@ function customerObjectForClient(item) {
     implantUsed: normalizeCustomerValue(item.ImplantUsed),
     procedureType: normalizeCustomerValue(item.ProcedureType),
     usageHospital: normalizeCustomerValue(item.UsageHospital),
+    monthlyCaseCount: safeNumber(item.MonthlyCaseCount),
+    orthopedicCaseTypes: normalizeCustomerValue(item.OrthopedicCaseTypes),
+    implantVendors: normalizeCustomerValue(item.ImplantVendors),
+    vendorSupport: normalizeCustomerValue(item.VendorSupport),
   };
 }
 
@@ -814,6 +903,11 @@ function customerRowFromPayload(payload, previous) {
     ["EXISTING", "TARGET"],
     "TARGET"
   );
+  const monthlyCaseCount = hasOwn(input, "monthlyCaseCount") ? safeNumber(input.monthlyCaseCount) : safeNumber(old.MonthlyCaseCount);
+  const orthopedicCaseTypes = hasOwn(input, "orthopedicCaseTypes") ? normalizeCustomerValue(input.orthopedicCaseTypes) : normalizeCustomerValue(old.OrthopedicCaseTypes);
+  const priority = customerType === "TARGET" && (monthlyCaseCount > 0 || orthopedicCaseTypes)
+    ? calculatePotentialPriority(monthlyCaseCount, orthopedicCaseTypes, input.priority || old.Priority)
+    : normalizeCustomerEnum(input.priority || old.Priority, ["HIGH", "MEDIUM", "LOW"], "MEDIUM");
 
   return [
     normalizeCustomerValue(old.ID || input.id) || Utilities.getUuid(),
@@ -823,7 +917,7 @@ function customerRowFromPayload(payload, previous) {
     normalizeCustomerValue(input.doctor || old.Doctor),
     hasOwn(input, "note") ? normalizeCustomerValue(input.note) : normalizeCustomerValue(old.Note),
     hasOwn(input, "plan") ? normalizeCustomerValue(input.plan) : normalizeCustomerValue(old.Plan),
-    normalizeCustomerEnum(input.priority || old.Priority, ["HIGH", "MEDIUM", "LOW"], "MEDIUM"),
+    priority,
     normalizeCustomerEnum(
       old.Status || input.status || (customerType === "EXISTING" ? "APPROVED" : "NEW"),
       ["NEW", "TARGETED", "APPROVED", "REJECTED"],
@@ -853,6 +947,10 @@ function customerRowFromPayload(payload, previous) {
     hasOwn(input, "implantUsed") ? normalizeCustomerValue(input.implantUsed) : normalizeCustomerValue(old.ImplantUsed),
     hasOwn(input, "procedureType") ? normalizeCustomerValue(input.procedureType) : normalizeCustomerValue(old.ProcedureType),
     hasOwn(input, "usageHospital") ? normalizeCustomerValue(input.usageHospital) : normalizeCustomerValue(old.UsageHospital),
+    monthlyCaseCount,
+    orthopedicCaseTypes,
+    hasOwn(input, "implantVendors") ? normalizeCustomerValue(input.implantVendors) : normalizeCustomerValue(old.ImplantVendors),
+    hasOwn(input, "vendorSupport") ? normalizeCustomerValue(input.vendorSupport) : normalizeCustomerValue(old.VendorSupport),
   ];
 }
 
@@ -1195,15 +1293,27 @@ function advanceCustomerJourney(payload) {
 
     const owner = normalizeCustomerValue(payload.owner || before.Owner);
     const product = normalizeCustomerValue(payload.productOffered || before.ProductOffered);
+    const note = hasOwn(payload, "note") ? normalizeCustomerValue(payload.note) : normalizeCustomerValue(before.Note);
+    const plan = hasOwn(payload, "plan") ? normalizeCustomerValue(payload.plan) : normalizeCustomerValue(before.Plan);
+    const outcome = hasOwn(payload, "outcome") ? normalizeCustomerValue(payload.outcome) : normalizeCustomerValue(before.Outcome);
     const usageHospital = normalizeCustomerValue(payload.usageHospital || before.UsageHospital || before.Hospital);
     const implantUsed = normalizeCustomerValue(payload.implantUsed || before.ImplantUsed || product);
     const procedureType = normalizeCustomerValue(payload.procedureType || before.ProcedureType);
+    const monthlyCaseCount = hasOwn(payload, "monthlyCaseCount") ? safeNumber(payload.monthlyCaseCount) : safeNumber(before.MonthlyCaseCount);
+    const orthopedicCaseTypes = hasOwn(payload, "orthopedicCaseTypes") ? normalizeCustomerValue(payload.orthopedicCaseTypes) : normalizeCustomerValue(before.OrthopedicCaseTypes);
+    const implantVendors = hasOwn(payload, "implantVendors") ? normalizeCustomerValue(payload.implantVendors) : normalizeCustomerValue(before.ImplantVendors);
+    const vendorSupport = hasOwn(payload, "vendorSupport") ? normalizeCustomerValue(payload.vendorSupport) : normalizeCustomerValue(before.VendorSupport);
     const missing = [];
     if (!normalizeCustomerValue(before.Territory)) missing.push("Territory");
     if (!normalizeCustomerValue(before.Hospital)) missing.push("Hospital");
     if (!normalizeCustomerValue(before.Doctor)) missing.push("Doctor");
     if (!owner) missing.push("Owner / Sales PIC");
     if (stageOrder[nextStage] >= stageOrder.OFFERED && !product) missing.push("Product Offered");
+    if (stageOrder[nextStage] >= stageOrder.TARGETED && !plan) missing.push("Planning");
+    if (nextStage === "TARGETED" && monthlyCaseCount <= 0) missing.push("Jumlah case per bulan");
+    if (nextStage === "TARGETED" && !orthopedicCaseTypes) missing.push("Jenis case orthopedi");
+    if (nextStage === "TARGETED" && !implantVendors) missing.push("Vendor implant");
+    if (nextStage === "TARGETED" && !vendorSupport) missing.push("Support vendor");
     if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !usageHospital) missing.push("Rumah sakit tindakan");
     if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !implantUsed) missing.push("Implant yang digunakan");
     if (stageOrder[nextStage] >= stageOrder.FIRST_USE && !procedureType) missing.push("Jenis tindakan");
@@ -1215,6 +1325,11 @@ function advanceCustomerJourney(payload) {
     while (next.length < CUSTOMER_HEADERS.length) next.push("");
     const now = new Date();
     next[9] = owner;
+    next[5] = note;
+    next[6] = plan;
+    if (hasOwn(payload, "hospital")) next[3] = normalizeCustomerValue(payload.hospital);
+    if (hasOwn(payload, "practiceHospital2")) next[26] = normalizeCustomerValue(payload.practiceHospital2);
+    if (hasOwn(payload, "practiceHospital3")) next[27] = normalizeCustomerValue(payload.practiceHospital3);
     next[13] = now;
     next[16] = nextStage;
     next[17] = product;
@@ -1231,16 +1346,46 @@ function advanceCustomerJourney(payload) {
       next[21] = Math.max(2, safeNumber(before.UsageCount) + 1);
     }
     if (hasOwn(payload, "nextFollowUp")) next[22] = payload.nextFollowUp || "";
-    if (hasOwn(payload, "outcome")) next[23] = normalizeCustomerValue(payload.outcome);
+    if (hasOwn(payload, "outcome")) next[23] = outcome;
     if (stageOrder[nextStage] >= stageOrder.FIRST_USE) {
       next[30] = implantUsed;
       next[31] = procedureType;
       next[32] = usageHospital;
     }
+    next[33] = monthlyCaseCount;
+    next[34] = orthopedicCaseTypes;
+    next[35] = implantVendors;
+    next[36] = vendorSupport;
+    if (nextStage === "TARGETED") {
+      next[7] = calculatePotentialPriority(monthlyCaseCount, orthopedicCaseTypes, before.Priority);
+    }
 
     sheet.getRange(index + 1, 1, 1, CUSTOMER_HEADERS.length).setValues([next]);
     const after = customerArrayToObject(next);
     const actor = normalizeCustomerValue(payload.by || Session.getActiveUser().getEmail());
+    if (nextStage === "FIRST_USE" || nextStage === "REPEAT_USE") {
+      const usageSheet = getCustomerUsageSheet();
+      usageSheet.appendRow([
+        Utilities.getUuid(),
+        now,
+        id,
+        normalizeCustomerValue(after.Doctor),
+        normalizeCustomerValue(after.CustomerType),
+        normalizeCustomerValue(after.Territory),
+        usageHospital,
+        implantUsed,
+        procedureType,
+        nextStage === "FIRST_USE" ? "FIRST_USE" : "REPEAT_USE",
+        safeNumber(after.UsageCount),
+        product,
+        note,
+        plan,
+        outcome,
+        owner,
+        actor,
+      ]);
+      usageSheet.autoResizeColumns(1, CUSTOMER_USAGE_HEADERS.length);
+    }
     logCustomerHistory(id, "JOURNEY_" + nextStage, before, after, actor);
     return { status: "success", data: customerObjectForClient(after) };
   } finally {
@@ -1261,11 +1406,12 @@ function doGet(e) {
       return cors({
         status: "success",
         module: "CustomerMapping",
-        version: 7,
-        actions: ["customerList", "customerBulkImport", "customerDecision", "customerUpsert", "customerDelete", "customerJourney"],
+        version: 10,
+        actions: ["customerList", "customerBulkImport", "customerDecision", "customerUpsert", "customerDelete", "customerJourney", "customerUsageList"],
       });
     }
     if (action === "customerList") return cors(listCustomers(req.parameter));
+    if (action === "customerUsageList") return cors(listCustomerUsage());
     if (action === "scanLookup") return cors(scanLookup(req));
     if (action === "importExternal") return cors(importExternalSheet(req.parameter));
     if (action === "kpi") {

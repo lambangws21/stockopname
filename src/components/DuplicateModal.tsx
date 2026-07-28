@@ -4,6 +4,7 @@ import { StockRow } from "@/types/stock";
 import { useState } from "react";
 import { useStockMutation } from "@/hooks/useStockMutation";
 import type { GasSheetContext } from "@/lib/gas";
+import { LoaderCircle } from "lucide-react";
 
 interface DuplicateModalProps {
   open: boolean;
@@ -75,7 +76,12 @@ export default function DuplicateModal({
             onClick={submit}
             disabled={loading}
           >
-            {loading ? "Duplicating..." : "Duplicate"}
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <LoaderCircle size={15} className="animate-spin" />
+                Menyalin…
+              </span>
+            ) : "Duplicate"}
           </button>
         </div>
       </div>

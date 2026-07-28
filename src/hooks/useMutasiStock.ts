@@ -48,6 +48,8 @@ export function useMutasiStock({
         No: row.No,
         qty,
         type,
+        movementReason: type === "in" ? "REFILL" : "OPERASI",
+        note: type === "in" ? "Refill stok" : "Terpakai untuk operasi",
       });
 
       setSuccess(true);

@@ -49,7 +49,12 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`API Error ${res.status}`);
+    const errorBody = (await res.json().catch(() => null)) as
+      | { message?: string }
+      | null;
+    throw new Error(
+      errorBody?.message || `API Error ${res.status}`
+    );
   }
 
   return res.json() as Promise<GasResponse<T>>;

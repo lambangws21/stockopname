@@ -60,6 +60,8 @@ export default function StockTablePremium({
       No: 0,
       NoStok: "",
       Deskripsi: "",
+      Implant: "",
+      Brand: "",
       Batch: "",
       Qty: 0,
       TotalQty: 0,
@@ -113,9 +115,10 @@ export default function StockTablePremium({
     });
 
     const headers: (keyof StockRow)[] = [
-      "No",
       "NoStok",
       "Deskripsi",
+      "Implant",
+      "Brand",
       "Batch",
       "Qty",
       "TotalQty",
@@ -162,7 +165,7 @@ export default function StockTablePremium({
   };
 
   const filteredRows = table.paginated.filter((r) =>
-    `${r.No} ${r.NoStok} ${r.Deskripsi} ${r.Batch}`
+    `${r.NoStok} ${r.Deskripsi} ${r.Batch}`
       .toLowerCase()
       .includes(search.toLowerCase())
   );
@@ -201,7 +204,7 @@ export default function StockTablePremium({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search No / Nama / Batch"
+          placeholder="Cari REF / Nama / Batch"
           className="pl-8 pr-3 py-2 border rounded w-full text-sm dark:bg-zinc-800"
         />
       </div>
@@ -213,9 +216,10 @@ export default function StockTablePremium({
             <tr>
               {(
                 [
-                  "No",
                   "NoStok",
                   "Deskripsi",
+                  "Implant",
+                  "Brand",
                   "Batch",
                   "Qty",
                   "TotalQty",
@@ -235,7 +239,7 @@ export default function StockTablePremium({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={10} className="p-6 text-center">
+                <td colSpan={11} className="p-6 text-center">
                   Loading…
                 </td>
               </tr>
@@ -249,7 +253,20 @@ export default function StockTablePremium({
                     changes[r.No] ? "bg-yellow-50" : ""
                   }`}
                 >
-                  {(Object.keys(r) as (keyof StockRow)[]).map((f) => (
+                  {(
+                    [
+                      "NoStok",
+                      "Deskripsi",
+                      "Implant",
+                      "Brand",
+                      "Batch",
+                      "Qty",
+                      "TotalQty",
+                      "TERPAKAI",
+                      "REFILL",
+                      "KET",
+                    ] as (keyof StockRow)[]
+                  ).map((f) => (
                     <td key={`${r.No}-${f}`} className="px-4 py-2">
                       {renderCell(r, f)}
                     </td>

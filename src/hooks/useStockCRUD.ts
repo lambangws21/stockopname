@@ -28,6 +28,8 @@ function buildSignature(rows: StockRow[]) {
       r.No,
       r.NoStok,
       r.Deskripsi,
+      r.Implant,
+      r.Brand,
       r.Batch,
       r.Qty,
       r.TotalQty,
@@ -46,6 +48,7 @@ export function useStockCRUD({
 }: UseStockCRUDParams) {
   const [data, setData] = useState<StockRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mutating, setMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initializedRef = useRef(false);
   const signatureRef = useRef("");
@@ -114,12 +117,15 @@ export function useStockCRUD({
   /* ================= CREATE ================= */
   const createRow = async (row: StockRow) => {
     localMutationRef.current = true;
+    setMutating(true);
     try {
       await gasCreate({
         sheet,
         ...context,
         NoStok: row.NoStok,
         Deskripsi: row.Deskripsi,
+        Implant: row.Implant,
+        Brand: row.Brand,
         Batch: row.Batch,
         Qty: row.Qty,
         TERPAKAI: row.TERPAKAI,
@@ -130,6 +136,7 @@ export function useStockCRUD({
       await reloadWithOptions({ silent: true, source: "local" });
     } finally {
       localMutationRef.current = false;
+      setMutating(false);
     }
   };
 
@@ -147,6 +154,7 @@ export function useStockCRUD({
     );
 
     localMutationRef.current = true;
+    setMutating(true);
     try {
       await gasUpdate({
         sheet,
@@ -154,6 +162,8 @@ export function useStockCRUD({
         No: row.No,
         NoStok: row.NoStok,
         Deskripsi: row.Deskripsi,
+        Implant: row.Implant,
+        Brand: row.Brand,
         Batch: row.Batch,
         Qty: row.Qty,
         TERPAKAI: row.TERPAKAI,
@@ -167,6 +177,7 @@ export function useStockCRUD({
       throw err;
     } finally {
       localMutationRef.current = false;
+      setMutating(false);
     }
   };
 
@@ -177,6 +188,7 @@ export function useStockCRUD({
     setData((curr) => curr.filter((r) => r.No !== No));
 
     localMutationRef.current = true;
+    setMutating(true);
     try {
       await gasDelete({ sheet, No, ...context });
       await reloadWithOptions({ silent: true, source: "local" });
@@ -185,12 +197,14 @@ export function useStockCRUD({
       throw err;
     } finally {
       localMutationRef.current = false;
+      setMutating(false);
     }
   };
 
   return {
     data,
     loading,
+    mutating,
     error,
     reload,
     createRow,

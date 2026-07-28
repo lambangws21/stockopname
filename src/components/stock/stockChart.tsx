@@ -92,7 +92,7 @@ export function StockChart({ reloadKey }: StockChartProps) {
         Perbandingan Total Qty vs Terpakai
       </h3>
 
-      <div className="h-72">
+      <div className="h-72 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" />

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { StockRow } from "@/types/stock";
 import {
   MoreVertical,
@@ -36,28 +37,82 @@ export default function RowActions({
   onDetail,
 }: RowActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const [mutateOpen, setMutateOpen] = useState(false);
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+
+      const menuHeight = menuRef.current?.offsetHeight || 210;
+      const spaceBelow = window.innerHeight - trigger.bottom;
+      const openAbove = spaceBelow < menuHeight + 12 && trigger.top > menuHeight;
+
+      setMenuPosition({
+        top: openAbove
+          ? Math.max(8, trigger.top - menuHeight - 6)
+          : Math.min(window.innerHeight - menuHeight - 8, trigger.bottom + 6),
+        right: Math.max(8, window.innerWidth - trigger.right),
+      });
+    };
+
+    const closeOnOutsideClick = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (
+        !triggerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setMenuOpen(false);
+      }
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("touchstart", closeOnOutsideClick);
+
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("touchstart", closeOnOutsideClick);
+    };
+  }, [menuOpen]);
 
   return (
     <div className="relative">
       {/* ACTION BUTTON */}
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setMenuOpen((x) => !x)}
         className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+        aria-label="Buka menu tindakan"
+        aria-expanded={menuOpen}
       >
         <MoreVertical size={18} />
       </button>
 
       {/* DROPDOWN MENU */}
-      {menuOpen && (
+      {menuOpen && typeof document !== "undefined" && createPortal(
         <div
-          className="absolute right-6 -top-10 bg-white dark:bg-zinc-900 border dark:border-zinc-700 shadow-lg rounded-lg w-44 z-40"
-          onMouseLeave={() => setMenuOpen(false)}
+          ref={menuRef}
+          className="fixed w-48 overflow-hidden rounded-xl border bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+          style={{
+            top: menuPosition.top,
+            right: menuPosition.right,
+            zIndex: 10000,
+          }}
+          role="menu"
         >
           {/* DETAIL */}
           {onDetail && (
@@ -91,7 +146,7 @@ export default function RowActions({
             }}
             className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            <RefreshCcw size={14} /> Mutasi
+            <RefreshCcw size={14} /> Pergerakan Stok
           </button>
 
           {/* DUPLICATE */}
@@ -115,7 +170,8 @@ export default function RowActions({
           >
             <Trash2 size={14} /> Delete
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* ===== MODALS ===== */}

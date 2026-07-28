@@ -7,9 +7,16 @@ import {
   DecodeHintType,
 } from "@zxing/library";
 import { parseGS1 } from "@/utils/GS1Parser";
+import { Camera, LoaderCircle, ScanText, Search } from "lucide-react";
 
 interface ScannerProps {
-  onDetected: (data: { ref: string; lot: string; exp?: string; raw?: string }) => void;
+  onDetected: (data: {
+    ref: string;
+    lot: string;
+    exp?: string;
+    raw?: string;
+    searchField?: "REF" | "LOT";
+  }) => void;
 }
 
 type ImageMode = "none" | "contrast" | "threshold";
@@ -156,6 +163,11 @@ export default function Scanner({ onDetected }: ScannerProps) {
   const [raw, setRaw] = useState("");
   const [scannerError, setScannerError] = useState("");
   const [imageDecodeLoading, setImageDecodeLoading] = useState(false);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrValue, setOcrValue] = useState("");
+  const [ocrCandidates, setOcrCandidates] = useState<string[]>([]);
+  const [ocrField, setOcrField] = useState<"REF" | "LOT">("LOT");
 
   const playBeep = useCallback(async () => {
     try {
@@ -337,6 +349,66 @@ export default function Scanner({ onDetected }: ScannerProps) {
     }
   };
 
+  const handleOcrImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setOcrLoading(true);
+    setOcrProgress(0);
+    setOcrCandidates([]);
+    setOcrValue("");
+    setScannerError("");
+
+    try {
+      const { createWorker } = await import("tesseract.js");
+      const worker = await createWorker("eng", 1, {
+        logger(message) {
+          if (message.status === "recognizing text") {
+            setOcrProgress(Math.round((message.progress || 0) * 100));
+          }
+        },
+      });
+
+      await worker.setParameters({
+        tessedit_char_whitelist:
+          "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-",
+        preserve_interword_spaces: "1",
+      });
+      const result = await worker.recognize(file);
+      await worker.terminate();
+
+      const candidates = extractOcrCandidates(result.data.text);
+      if (candidates.length === 0) {
+        throw new Error("Angka tidak ditemukan");
+      }
+
+      setOcrCandidates(candidates);
+      setOcrValue(candidates[0]);
+    } catch (error) {
+      setScannerError(
+        error instanceof Error
+          ? `${error.message}. Foto ulang dengan posisi dekat, lurus, dan cukup terang.`
+          : "OCR gagal membaca angka."
+      );
+    } finally {
+      setOcrLoading(false);
+      event.target.value = "";
+    }
+  };
+
+  const searchOcrValue = () => {
+    const value = ocrValue.trim().toUpperCase();
+    if (!value) return;
+
+    onDetected({
+      ref: ocrField === "REF" ? value : "",
+      lot: ocrField === "LOT" ? value : "",
+      raw: value,
+      searchField: ocrField,
+    });
+    void playBeep();
+  };
+
   return (
     <div className="space-y-2">
       <video
@@ -358,6 +430,98 @@ export default function Scanner({ onDetected }: ScannerProps) {
           disabled={imageDecodeLoading}
         />
       </label>
+
+      <div className="rounded-xl border bg-zinc-50 p-3 dark:bg-zinc-800/50">
+        <div className="flex items-center gap-2">
+          <ScanText size={17} className="text-violet-600" />
+          <div>
+            <p className="text-xs font-bold">Baca angka REF / LOT</p>
+            <p className="text-[10px] text-zinc-500">
+              Foto tulisan angka pada label implant
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {(["REF", "LOT"] as const).map((field) => (
+            <button
+              type="button"
+              key={field}
+              onClick={() => setOcrField(field)}
+              className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                ocrField === field
+                  ? "border-violet-500 bg-violet-600 text-white"
+                  : "bg-white dark:bg-zinc-900"
+              }`}
+            >
+              Cari berdasarkan {field}
+            </button>
+          ))}
+        </div>
+
+        <label className="mt-2 inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-zinc-900 px-3 text-xs font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900">
+          {ocrLoading ? (
+            <>
+              <LoaderCircle size={15} className="animate-spin" />
+              Membaca angka {ocrProgress}%
+            </>
+          ) : (
+            <>
+              <Camera size={15} />
+              Foto angka dengan kamera
+            </>
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={handleOcrImage}
+            disabled={ocrLoading}
+          />
+        </label>
+
+        {ocrCandidates.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              {ocrCandidates.slice(0, 6).map((candidate) => (
+                <button
+                  type="button"
+                  key={candidate}
+                  onClick={() => setOcrValue(candidate)}
+                  className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                    ocrValue === candidate
+                      ? "border-violet-500 bg-violet-50 text-violet-700"
+                      : "bg-white dark:bg-zinc-900"
+                  }`}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={ocrValue}
+                onChange={(event) => setOcrValue(event.target.value)}
+                inputMode="numeric"
+                placeholder={`Periksa angka ${ocrField}`}
+                className="h-10 min-w-0 flex-1 rounded-lg border bg-white px-3 text-sm font-bold outline-none focus:border-violet-500 dark:bg-zinc-900"
+              />
+              <button
+                type="button"
+                onClick={searchOcrValue}
+                disabled={!ocrValue.trim()}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <Search size={14} /> Cari
+              </button>
+            </div>
+            <p className="text-[10px] text-zinc-500">
+              Periksa hasil OCR sebelum mencari. Ketuk angka lain jika hasil pertama kurang tepat.
+            </p>
+          </div>
+        )}
+      </div>
 
       {scannerError ? (
         <p className="text-xs text-red-600 break-all">{scannerError}</p>
@@ -408,6 +572,26 @@ function extractRefFromRaw(raw: string): string {
   }
 
   return "";
+}
+
+function extractOcrCandidates(raw: string) {
+  const normalized = String(raw ?? "")
+    .toUpperCase()
+    .replace(/[|]/g, "1")
+    .replace(/[–—]/g, "-");
+  const tokens = normalized.match(/[A-Z0-9-]{3,}/g) ?? [];
+
+  return Array.from(
+    new Set(
+      tokens
+        .map((token) => token.replace(/^-+|-+$/g, ""))
+        .filter((token) => token.length >= 3 && /\d/.test(token))
+    )
+  ).sort((a, b) => {
+    const aNumeric = /^\d+$/.test(a) ? 1 : 0;
+    const bNumeric = /^\d+$/.test(b) ? 1 : 0;
+    return bNumeric - aNumeric || b.length - a.length;
+  });
 }
 
 function extractLotFromRaw(raw: string): string {
