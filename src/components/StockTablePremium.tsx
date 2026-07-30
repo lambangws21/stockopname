@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import ExcelJS from "exceljs";
 import {
   Search,
@@ -39,6 +39,7 @@ import {
   BellRing,
   ScanLine,
   Warehouse,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -240,6 +241,11 @@ export default function StockTablePremium({
       ? "LOT"
       : "REF"
     : mode;
+  const activeFilterCount =
+    brandFilters.length +
+    implantFilters.length +
+    (stockStatusFilter === "ALL" ? 0 : 1) +
+    (mode === "ALL" ? 0 : 1);
 
   /* ================= AUTO BARCODE ================= */
   useEffect(() => {
@@ -525,29 +531,29 @@ export default function StockTablePremium({
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+          <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-5 sm:overflow-visible sm:px-0 sm:pb-0">
           {onOpenScanner && (
             <button
               type="button"
               onClick={onOpenScanner}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[11px] font-semibold hover:bg-white/20 sm:hidden"
+              className="inline-flex min-w-[82px] shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:hidden"
               title="Scan barcode"
             >
               <ScanLine size={16} />
               <span>Scan</span>
             </button>
           )}
-          <button onClick={reload} className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[11px] font-semibold hover:bg-white/20" title="Muat ulang">
+          <button onClick={reload} className="inline-flex min-w-24 shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:min-w-0 sm:text-[11px]" title="Muat ulang">
             <RefreshCcw size={16} />
             <span className="sm:hidden">Muat ulang</span>
           </button>
-          <button onClick={handleExport} className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[11px] font-semibold hover:bg-white/20" title="Export Excel">
+          <button onClick={handleExport} className="inline-flex min-w-28 shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:min-w-0 sm:text-[11px]" title="Export Excel">
             <FileSpreadsheet size={16} />
             <span className="sm:hidden">Export Excel</span>
           </button>
           <button
             onClick={() => setOpnameOpen(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[11px] font-semibold hover:bg-white/20"
+            className="inline-flex min-w-[92px] shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:min-w-0 sm:text-[11px]"
             title="Stock opname cepat"
           >
             <ClipboardCheck size={16} />
@@ -556,13 +562,13 @@ export default function StockTablePremium({
           <button
             onClick={() => setLowStockAlertOpen(true)}
             disabled={lowStockAlertCount === 0}
-            className="relative inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[11px] font-semibold hover:bg-white/20 disabled:opacity-40"
+            className="relative inline-flex min-w-[102px] shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 disabled:opacity-40 sm:min-w-0 sm:text-[11px]"
             title="Lihat peringatan stok"
           >
             <BellRing size={16} />
             <span className="sm:hidden">Peringatan</span>
             {lowStockAlertCount > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-red-500 px-1 text-[9px] font-bold leading-4 text-white">
+              <span className="absolute right-1 top-1 flex min-h-5 min-w-5 items-center justify-center rounded-md border-2 border-[#263047] bg-red-500 px-1 text-[9px] font-black leading-none text-white shadow-sm sm:-right-1.5 sm:-top-1.5 sm:border-zinc-900">
                 {lowStockAlertCount}
               </span>
             )}
@@ -573,7 +579,7 @@ export default function StockTablePremium({
               setSelectedRow(null);
               setEditOpen(true);
             }}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-500 p-2.5 text-[11px] font-semibold text-white hover:bg-blue-400 sm:col-span-1"
+            className="inline-flex min-w-[126px] shrink-0 snap-start items-center justify-center gap-2 rounded-lg bg-blue-500 p-2.5 text-[10px] font-semibold text-white hover:bg-blue-400 sm:col-span-1 sm:min-w-0 sm:text-[11px]"
             title="Tambah data"
           >
             <Plus size={16} />
@@ -585,7 +591,7 @@ export default function StockTablePremium({
 
       <div className="space-y-4 bg-[#f8fafc] p-3 pb-24 dark:bg-zinc-950 sm:bg-transparent sm:p-5 sm:pb-5 dark:sm:bg-transparent">
       {/* COMPACT BRAND SELECTOR */}
-      <div className="-mt-7 grid grid-cols-3 gap-1 rounded-xl border bg-white p-1 shadow-sm dark:bg-zinc-900 sm:mt-0 sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
+      <div className="-mt-7 grid grid-cols-3 gap-1 rounded-lg border bg-white p-1 shadow-sm dark:bg-zinc-900 sm:mt-0 sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
         <button
           type="button"
           onClick={() => setBrandFilters([])}
@@ -635,7 +641,9 @@ export default function StockTablePremium({
       </div>
 
       {/* FILTERS */}
-      <div className="rounded-xl border bg-white p-2.5 dark:bg-zinc-800/50 sm:bg-zinc-50">
+      <div className={`sticky top-0 rounded-lg border bg-white p-2.5 shadow-sm dark:bg-zinc-900 sm:static sm:rounded-xl sm:bg-zinc-50 sm:shadow-none dark:sm:bg-zinc-800/50 ${
+        mobileFiltersOpen ? "z-60" : "z-30"
+      }`}>
         <div className="mb-2 hidden flex-wrap items-center justify-between gap-2 px-0.5 sm:flex">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <SlidersHorizontal size={15} />
@@ -659,30 +667,101 @@ export default function StockTablePremium({
           </button>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(280px,1fr)_150px_190px_110px_auto]">
-        <div className="relative flex-1 max-sm:pr-24">
-          <Search size={15} className="absolute left-3 top-3 text-zinc-400" />
-          <input
-            value={scannedValue || search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari REF, nama, batch..."
-            className="h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm outline-none focus:border-blue-400 dark:bg-zinc-900"
-          />
+        <div className="grid grid-cols-[minmax(0,1fr)_94px] gap-2 sm:block">
+          <label className="relative block">
+            <Search size={16} className="pointer-events-none absolute left-3 top-3.5 text-zinc-400" />
+            <input
+              value={scannedValue || search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari nama, REF, atau LOT..."
+              className="h-15 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-9 text-sm font-medium outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-blue-950"
+            />
+            {search && !scannedValue && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-1.5 top-1.5 flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-slate-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                aria-label="Hapus pencarian"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </label>
           <button
             type="button"
             onClick={() => setMobileFiltersOpen((value) => !value)}
-            className="absolute right-0 top-0 inline-flex h-10 w-[88px] items-center justify-center gap-1.5 rounded-lg bg-slate-100 text-[10px] font-bold text-slate-700 sm:hidden"
+            className={`relative inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border text-[10px] font-black sm:hidden ${
+              mobileFiltersOpen || activeFilterCount > 0
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-300 bg-slate-100 text-slate-700"
+            }`}
             aria-expanded={mobileFiltersOpen}
           >
-            <SlidersHorizontal size={13} />
+            <SlidersHorizontal size={14} />
             Filter
+            {activeFilterCount > 0 && (
+              <span className="flex min-w-4 items-center justify-center rounded bg-white/20 px-1 text-[9px]">
+                {activeFilterCount}
+              </span>
+            )}
             <ChevronDown
               size={12}
-              className={mobileFiltersOpen ? "rotate-180" : ""}
+              className={`transition ${mobileFiltersOpen ? "rotate-180" : ""}`}
             />
           </button>
         </div>
 
-        <div className={`${mobileFiltersOpen ? "contents" : "hidden"} sm:contents`}>
+        <AnimatePresence>
+          {mobileFiltersOpen && (
+            <motion.button
+              type="button"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => setMobileFiltersOpen(false)}
+              className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-[1px] sm:hidden"
+              aria-label="Tutup filter"
+            />
+          )}
+        </AnimatePresence>
+
+        <motion.div
+          key={mobileFiltersOpen ? "filter-open" : "filter-closed"}
+          initial={
+            isMobileViewport && mobileFiltersOpen
+              ? { opacity: 0, y: 72, scale: 0.98 }
+              : false
+          }
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{
+            type: "spring",
+            stiffness: 340,
+            damping: 30,
+            mass: 0.8,
+          }}
+          className={`${
+            mobileFiltersOpen
+              ? "fixed inset-x-3 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-50 grid max-h-[60dvh] gap-3 overflow-y-auto rounded-xl border bg-white p-3 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+              : "hidden"
+          } sm:contents`}
+        >
+        <div className="flex items-center justify-between border-b pb-2 sm:hidden">
+          <div>
+            <p className="text-sm font-black">Filter Stock</p>
+            <p className="text-[9px] text-zinc-500">
+              {filteredData.length} dari {data.length} data
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMobileFiltersOpen(false)}
+            className="flex size-9 items-center justify-center rounded-4xl border text-zinc-500"
+            aria-label="Tutup panel filter"
+          >
+            <X size={16} />
+          </button>
+        </div>
         <ChecklistFilter
           label="Brand"
           allLabel="Semua brand"
@@ -714,21 +793,27 @@ export default function StockTablePremium({
         <select
           value={scannedValue ? activeMode : mode}
           onChange={(e) => setMode(e.target.value as FilterMode)}
-          className="rounded-lg border bg-white px-3 py-2.5 text-sm dark:bg-zinc-900"
+          className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold dark:border-zinc-700 dark:bg-zinc-900"
         >
-          <option value="ALL">ALL</option>
-          <option value="REF">REF</option>
-          <option value="LOT">LOT</option>
-          <option value="NAMA">NAMA</option>
+          <option value="ALL">Cari semua kolom</option>
+          <option value="REF">Hanya REF</option>
+          <option value="LOT">Hanya LOT</option>
+          <option value="NAMA">Hanya nama</option>
         </select>
-        <div className="inline-flex h-10 rounded-lg border bg-white p-1 dark:bg-zinc-900">
+        <div className="relative grid h-16 grid-cols-2 overflow-hidden rounded-lg border border-slate-300 bg-slate-100 p-1 dark:border-zinc-700 dark:bg-zinc-800">
+          <motion.span
+            aria-hidden="true"
+            className="absolute bottom-1 left-1 top-1 w-[calc(50%-0.25rem)] rounded-md bg-zinc-900 shadow-sm dark:bg-white"
+            animate={{ x: viewMode === "table" ? "0%" : "100%" }}
+            transition={{ type: "spring", stiffness: 420, damping: 32 }}
+          />
           <button
             type="button"
             onClick={() => setViewModePreference("table")}
             title="Table view"
-            className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold ${
+            className={`relative z-10 inline-flex items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold transition-colors ${
               viewMode === "table"
-                ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
+                ? "text-white dark:text-zinc-900"
                 : "text-zinc-500"
             }`}
           >
@@ -738,19 +823,17 @@ export default function StockTablePremium({
             type="button"
             onClick={() => setViewModePreference("card")}
             title="Card view"
-            className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold ${
+            className={`relative z-10 inline-flex items-center justify-center gap-1.5 rounded-md px-3 text-[11px] font-semibold transition-colors ${
               viewMode === "card"
-                ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900"
+                ? "text-white dark:text-zinc-900"
                 : "text-zinc-500"
             }`}
           >
             <LayoutGrid size={13} /> Card
           </button>
         </div>
-        </div>
-        </div>
-        <div className={`${mobileFiltersOpen ? "flex" : "hidden"} mt-2 flex-wrap items-center gap-1.5 border-t pt-2 sm:flex`}>
-          <span className="mr-1 text-[10px] font-semibold text-zinc-500">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-50 p-2 sm:col-span-full sm:rounded-none sm:bg-transparent sm:p-0 sm:pt-2 dark:bg-zinc-800/70 dark:sm:bg-transparent">
+          <span className="mr-1 w-full text-[9px] font-black uppercase tracking-wide text-zinc-500 sm:w-auto">
             Status stok
           </span>
           {([
@@ -762,7 +845,7 @@ export default function StockTablePremium({
               type="button"
               key={value}
               onClick={() => setStockStatusFilter(value)}
-              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+              className={`rounded-md border px-2.5 py-1 text-[10px] font-semibold ${
                 stockStatusFilter === value
                   ? value === "OUT"
                     ? "border-red-600 bg-red-600 text-white"
@@ -775,7 +858,7 @@ export default function StockTablePremium({
               {label}
             </button>
           ))}
-          <label className="ml-auto inline-flex items-center gap-1.5 text-[10px] text-zinc-500">
+          <label className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-md border bg-white px-2 text-[9px] font-bold text-zinc-500 dark:bg-zinc-900">
             Batas minimum
             <input
               type="number"
@@ -784,9 +867,31 @@ export default function StockTablePremium({
               onChange={(event) =>
                 setLowStockThreshold(Math.max(0, Number(event.target.value) || 0))
               }
-              className="h-7 w-14 rounded-md border bg-white px-2 text-center font-bold text-zinc-900 dark:bg-zinc-900 dark:text-white"
+              className="h-6 w-10 border-l bg-transparent pl-1 text-center font-black text-zinc-900 outline-none dark:text-white"
             />
           </label>
+          <button
+            type="button"
+            onClick={() => {
+              setBrandFilters([]);
+              setImplantFilters([]);
+              setSearch("");
+              setMode("ALL");
+              setStockStatusFilter("ALL");
+            }}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-[10px] font-bold text-zinc-600 sm:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          >
+            Reset semua filter
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setMobileFiltersOpen(false)}
+          className="h-11 rounded-lg bg-blue-600 text-xs font-black text-white sm:hidden"
+        >
+          Terapkan Filter · {filteredData.length} data
+        </button>
+        </motion.div>
         </div>
       </div>
       <QuickSearch
@@ -801,7 +906,7 @@ export default function StockTablePremium({
       />
 
       {/* SUMMARY */}
-      <div className="grid grid-cols-4 divide-x overflow-hidden rounded-xl border bg-white py-1 dark:bg-zinc-900">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-slate-200 dark:bg-zinc-700 sm:grid-cols-4 sm:rounded-xl">
         <SimpleMetric label="Data" value={summary.count} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Stok" value={summary.qty} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Terpakai" value={summary.used} tone="text-red-600" />
@@ -907,7 +1012,13 @@ export default function StockTablePremium({
       </section>
 
       {/* ================= TABLE VIEW ================= */}
-      <div className={`${viewMode === "table" ? "block" : "hidden"} overflow-x-auto rounded-xl border`}>
+      <motion.div
+        key={`table-view-${viewMode}`}
+        initial={viewMode === "table" ? { opacity: 0, y: 10 } : false}
+        animate={viewMode === "table" ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.22, ease: "easeOut" }}
+        className={`${viewMode === "table" ? "block" : "hidden"} overflow-x-auto rounded-xl border`}
+      >
         <div className="relative overflow-hidden rounded-xl border bg-white dark:bg-zinc-900 shadow-sm">
           <div className="overflow-x-auto">
             <table className="min-w-[1200px] w-full text-sm">
@@ -1070,7 +1181,7 @@ export default function StockTablePremium({
             </table>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* ================= CARD VIEW ================= */}
       {viewMode === "card" && (
@@ -1083,12 +1194,18 @@ export default function StockTablePremium({
           </span>
         </div>
       )}
-      <div className={viewMode === "card" ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3" : "hidden"}>
+      <motion.div
+        key={`card-view-${viewMode}`}
+        initial={viewMode === "card" ? { opacity: 0, y: 10 } : false}
+        animate={viewMode === "card" ? { opacity: 1, y: 0 } : {}}
+        transition={{ duration: 0.22, ease: "easeOut" }}
+        className={viewMode === "card" ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3" : "hidden"}
+      >
         {loading &&
           Array.from({ length: 4 }).map((_, index) => (
             <div
               key={`mobile-stock-skeleton-${index}`}
-              className="space-y-3 rounded-2xl border bg-white p-4 dark:bg-zinc-900"
+              className="space-y-3 rounded-xl border bg-white p-4 dark:bg-zinc-900"
             >
               <div className="h-4 w-3/4 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
               <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-200 dark:bg-zinc-700" />
@@ -1103,7 +1220,7 @@ export default function StockTablePremium({
             key={i}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`overflow-hidden rounded-2xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+            className={`overflow-hidden rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
               r.TotalQty <= 0
                 ? "border-red-400 bg-red-50 shadow-red-100 hover:border-red-600 dark:border-red-800 dark:bg-red-950/25 dark:shadow-none"
                 : "border-slate-300 bg-white hover:border-blue-300 dark:border-zinc-700 dark:bg-zinc-900"
@@ -1118,7 +1235,7 @@ export default function StockTablePremium({
                 ? "bg-violet-600"
                 : "bg-zinc-500"
             }`} />
-            <div className="p-4">
+            <div className="p-3.5 sm:p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap gap-1.5">
@@ -1139,7 +1256,7 @@ export default function StockTablePremium({
                   {highlight(r.Deskripsi)}
                 </div>
               </div>
-              <div className={`shrink-0 rounded-full border px-3 py-1 text-center text-[9px] font-bold ${
+              <div className={`shrink-0 rounded-md border px-2.5 py-1 text-center text-[9px] font-bold ${
                 r.TotalQty <= 0
                   ? "border-red-700 bg-red-600 text-white"
                   : r.TotalQty <= lowStockThreshold
@@ -1154,26 +1271,26 @@ export default function StockTablePremium({
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 divide-x border-t py-2.5">
-              <div>
-                <div className="text-[9px] text-zinc-400">Stok Tersedia</div>
+            <div className="mt-3 grid grid-cols-3 gap-1.5">
+              <div className="rounded-lg bg-slate-100 px-2 py-2.5 dark:bg-zinc-800">
+                <div className="text-[8px] font-bold uppercase text-zinc-500">Stok</div>
                 <div className={`mt-1 text-base font-black ${
                   r.TotalQty <= 0 ? "text-red-600" : "text-zinc-900 dark:text-white"
                 }`}>{r.TotalQty} Pcs</div>
               </div>
-              <div>
-                <div className="text-[9px] text-zinc-400">Terpakai</div>
+              <div className="rounded-lg bg-red-50 px-2 py-2.5 dark:bg-red-950/25">
+                <div className="text-[8px] font-bold uppercase text-red-500">Terpakai</div>
                 <div className="mt-1 text-base font-black text-red-500">{r.TERPAKAI || 0} Pcs</div>
               </div>
-              <div>
-                <div className="text-[9px] text-zinc-400">Riwayat Refill</div>
+              <div className="rounded-lg bg-amber-50 px-2 py-2.5 dark:bg-amber-950/25">
+                <div className="text-[8px] font-bold uppercase text-amber-600">Refill</div>
                 <div className="mt-1 text-base font-black text-amber-500">{r.REFILL || 0} Pcs</div>
               </div>
             </div>
 
             {latestDescription(r.KET) && (
-              <div className="mt-2 line-clamp-2 rounded-xl border border-dashed px-3 py-2 text-[11px] leading-5 text-zinc-500">
-                <span className="font-semibold text-zinc-700 dark:text-zinc-200">Terbaru: </span>
+              <div className="mt-2 line-clamp-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-[10px] leading-4 text-zinc-600 dark:border-blue-950 dark:bg-blue-950/20 dark:text-zinc-300">
+                <span className="font-bold text-blue-700 dark:text-blue-300">Update: </span>
                 {latestDescription(r.KET)}
               </div>
             )}
@@ -1208,7 +1325,7 @@ export default function StockTablePremium({
             </div>
           </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       {/* PAGINATION */}
       <div className="flex items-center justify-center gap-2">
@@ -1239,14 +1356,14 @@ export default function StockTablePremium({
         </button>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t bg-white/95 px-[max(0.25rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t bg-white/95 px-[max(0.25rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden">
         <button
           type="button"
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="flex flex-col items-center gap-1 text-[10px] font-bold text-blue-600"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
         >
-          <Layers3 size={17} />
-          Dashboard
+          <Layers3 size={19} />
+          Atas
         </button>
         <button
           type="button"
@@ -1255,37 +1372,37 @@ export default function StockTablePremium({
               .getElementById("stock-list")
               ?.scrollIntoView({ behavior: "smooth", block: "start" })
           }
-          className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500"
+          className="mx-0.5 flex min-h-12 -translate-y-1 flex-col items-center justify-center gap-0.5 rounded-md bg-blue-600 text-[9px] font-black text-white shadow-md shadow-blue-200 dark:shadow-none"
         >
-          <ClipboardCheck size={17} />
+          <ClipboardCheck size={19} />
           Stok
         </button>
         <Link
           href="/logistik"
-          className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
         >
-          <Warehouse size={17} />
+          <Warehouse size={19} />
           Logistik
         </Link>
         <Link
           href="/serah-terima"
-          className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
         >
-          <ClipboardSignature size={17} />
+          <ClipboardSignature size={19} />
           Serah
         </Link>
         <Link
           href="/rumah-sakit"
-          className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
         >
-          <Hospital size={17} />
+          <Hospital size={19} />
           Stock RS
         </Link>
         <Link
           href="/histori-tabel"
-          className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500"
+          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
         >
-          <NotebookTabs size={17} />
+          <NotebookTabs size={19} />
           Riwayat
         </Link>
       </nav>
@@ -1397,11 +1514,11 @@ function ChecklistFilter({
 
   return (
     <details className="group relative">
-      <summary className="flex h-10 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border bg-white px-3 text-sm dark:bg-zinc-900 [&::-webkit-details-marker]:hidden">
-        <span className="min-w-0 truncate">{summary}</span>
+      <summary className="flex h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold dark:border-zinc-700 dark:bg-zinc-900 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">{summary}</span>
         <span className="flex shrink-0 items-center gap-1">
           {values.length > 0 && (
-            <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
+            <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
               {values.length}
             </span>
           )}
@@ -1412,7 +1529,7 @@ function ChecklistFilter({
         </span>
       </summary>
 
-      <div className="absolute right-0 top-11 z-40 w-full min-w-56 overflow-hidden rounded-xl border bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="absolute right-0 top-12 z-40 w-full min-w-56 overflow-hidden rounded-lg border bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
         <div className="flex items-center justify-between border-b px-3 py-2">
           <span className="text-xs font-bold">{label}</span>
           {values.length > 0 && (
@@ -1475,7 +1592,7 @@ function SimpleMetric({
   tone: string;
 }) {
   return (
-    <div className="px-2 py-3 text-center sm:px-4">
+    <div className="bg-white px-2 py-3 text-center dark:bg-zinc-900 sm:px-4">
       <div className={`text-xl font-black sm:text-2xl ${tone}`}>{value}</div>
       <div className="mt-0.5 text-[10px] text-zinc-500 sm:text-xs">{label}</div>
     </div>
