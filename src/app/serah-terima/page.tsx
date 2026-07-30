@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   CalendarClock,
   ClipboardSignature,
   Copy,
@@ -70,13 +72,17 @@ function OnlineHandoverContent() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState("");
+  const [visibleItemCount, setVisibleItemCount] = useState(30);
   const [accessoryModalOpen, setAccessoryModalOpen] = useState(false);
   const [accessorySearch, setAccessorySearch] = useState("");
   const [accessoryBrandFilter, setAccessoryBrandFilter] = useState<
     "ALL" | HandoverBrand
   >("ALL");
   const [accessorySelection, setAccessorySelection] = useState<string[]>([]);
+  const [visibleAccessoryCount, setVisibleAccessoryCount] = useState(30);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const itemLoadMoreRef = useRef<HTMLDivElement>(null);
+  const accessoryLoadMoreRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,6 +147,8 @@ function OnlineHandoverContent() {
   }, [form.Items, itemSearch]);
 
   const selectedItems = form.Items.filter((item) => item.selected);
+  const renderedItems = filteredItems.slice(0, visibleItemCount);
+  const hasMoreItems = visibleItemCount < filteredItems.length;
   const issuedTotal = selectedItems.reduce(
     (total, item) => total + Number(item.qtyIssued || 0),
     0
@@ -178,6 +186,50 @@ function OnlineHandoverContent() {
     filteredAdditionalStockItems.every((row) =>
       accessorySelection.includes(stockItemKey(row))
     );
+  const renderedAdditionalStockItems = filteredAdditionalStockItems.slice(
+    0,
+    visibleAccessoryCount
+  );
+  const hasMoreAdditionalItems =
+    visibleAccessoryCount < filteredAdditionalStockItems.length;
+
+  useEffect(() => {
+    const target = itemLoadMoreRef.current;
+    if (!target || !hasMoreItems) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleItemCount((current) =>
+            Math.min(current + 30, filteredItems.length)
+          );
+        }
+      },
+      { rootMargin: "300px 0px" }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [filteredItems.length, hasMoreItems]);
+
+  useEffect(() => {
+    const target = accessoryLoadMoreRef.current;
+    if (!target || !hasMoreAdditionalItems || !accessoryModalOpen) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleAccessoryCount((current) =>
+            Math.min(current + 30, filteredAdditionalStockItems.length)
+          );
+        }
+      },
+      { rootMargin: "240px 0px" }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [
+    accessoryModalOpen,
+    filteredAdditionalStockItems.length,
+    hasMoreAdditionalItems,
+  ]);
 
   function toggleAdditionalItem(key: string) {
     setAccessorySelection((current) =>
@@ -229,6 +281,7 @@ function OnlineHandoverContent() {
       Checker2: form.Checker2,
       AcknowledgedBy: form.AcknowledgedBy,
     });
+    setVisibleItemCount(30);
   }
 
   function changeBrand(brand: HandoverBrand) {
@@ -244,6 +297,7 @@ function OnlineHandoverContent() {
       Checker2: form.Checker2,
       AcknowledgedBy: form.AcknowledgedBy,
     });
+    setVisibleItemCount(30);
   }
 
   async function persist(status: "DRAFT" | "DIKIRIM") {
@@ -515,12 +569,18 @@ function OnlineHandoverContent() {
                   </button>
                   <label className="relative min-w-0 sm:w-64">
                     <Search className="absolute left-3 top-3.5 text-zinc-400" size={14} />
-                    <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Cari REF..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-2 text-xs" />
+                    <input value={itemSearch} onChange={(event) => {
+                      setItemSearch(event.target.value);
+                      setVisibleItemCount(30);
+                    }} placeholder="Cari REF..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-2 text-xs" />
                   </label>
                   <button
                     type="button"
                     disabled={Boolean(form.ID)}
-                    onClick={() => setAccessoryModalOpen(true)}
+                    onClick={() => {
+                      setVisibleAccessoryCount(30);
+                      setAccessoryModalOpen(true);
+                    }}
                     className="col-span-3 inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border bg-white px-3 text-[10px] font-bold text-blue-700 disabled:opacity-40 sm:col-span-1 dark:bg-zinc-900"
                   >
                     <Plus size={14} /> Tambah aksesori
@@ -529,7 +589,7 @@ function OnlineHandoverContent() {
               </div>
 
               <div className="space-y-2 p-2 sm:hidden">
-                {filteredItems.map(({ item, index }) => (
+                {renderedItems.map(({ item, index }) => (
                   <HandoverItemCard
                     key={`${item.partNumber}-${item.batch}-${index}`}
                     item={item}
@@ -551,12 +611,26 @@ function OnlineHandoverContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredItems.map(({ item, index }) => (
+                    {renderedItems.map(({ item, index }) => (
                       <HandoverItemRow key={`${item.partNumber}-${item.batch}-${index}`} item={item} onChange={(next) => updateItem(setForm, index, next)} />
                     ))}
                   </tbody>
                 </table>
               </div>
+              {hasMoreItems && (
+                <div
+                  ref={itemLoadMoreRef}
+                  className="flex h-16 items-center justify-center border-t"
+                >
+                  <LoaderCircle
+                    size={20}
+                    className="animate-spin text-blue-600"
+                  />
+                  <span className="ml-2 text-[10px] font-bold text-zinc-500">
+                    Memuat implant berikutnya...
+                  </span>
+                </div>
+              )}
             </section>
 
             {form.InventoryPostedAt && (
@@ -689,7 +763,10 @@ function OnlineHandoverContent() {
                 <input
                   autoFocus
                   value={accessorySearch}
-                  onChange={(event) => setAccessorySearch(event.target.value)}
+                  onChange={(event) => {
+                    setAccessorySearch(event.target.value);
+                    setVisibleAccessoryCount(30);
+                  }}
                   placeholder="Cari REF, LOT, kategori, atau nama item..."
                   className="h-11 w-full rounded-xl border bg-transparent pl-10 pr-3 text-sm"
                 />
@@ -699,7 +776,10 @@ function OnlineHandoverContent() {
                   <button
                     key={brand}
                     type="button"
-                    onClick={() => setAccessoryBrandFilter(brand)}
+                    onClick={() => {
+                      setAccessoryBrandFilter(brand);
+                      setVisibleAccessoryCount(30);
+                    }}
                     className={`h-9 rounded-lg text-[10px] font-black ${
                       accessoryBrandFilter === brand
                         ? "bg-white text-blue-700 shadow-sm dark:bg-zinc-900"
@@ -724,7 +804,7 @@ function OnlineHandoverContent() {
             </div>
 
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 sm:p-4">
-              {filteredAdditionalStockItems.map((row) => {
+              {renderedAdditionalStockItems.map((row) => {
                 const key = stockItemKey(row);
                 const selected = accessorySelection.includes(key);
                 return (
@@ -774,6 +854,20 @@ function OnlineHandoverContent() {
               {filteredAdditionalStockItems.length === 0 && (
                 <div className="rounded-xl border border-dashed p-10 text-center text-xs text-zinc-500">
                   Tidak ada item tambahan yang ditemukan.
+                </div>
+              )}
+              {hasMoreAdditionalItems && (
+                <div
+                  ref={accessoryLoadMoreRef}
+                  className="flex h-14 items-center justify-center"
+                >
+                  <LoaderCircle
+                    size={18}
+                    className="animate-spin text-blue-600"
+                  />
+                  <span className="ml-2 text-[10px] font-bold text-zinc-500">
+                    Memuat item berikutnya...
+                  </span>
                 </div>
               )}
             </div>
@@ -885,6 +979,32 @@ function OnlineHandoverContent() {
           </section>
         </div>
       )}
+
+      <div className="fixed bottom-24 right-3 z-40 flex flex-col gap-2 sm:bottom-5 sm:right-5">
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="flex size-11 items-center justify-center rounded-full border bg-white/95 text-zinc-700 shadow-lg backdrop-blur dark:bg-zinc-900/95 dark:text-white"
+          aria-label="Kembali ke atas"
+          title="Ke atas"
+        >
+          <ArrowUp size={18} />
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            window.scrollTo({
+              top: document.documentElement.scrollHeight,
+              behavior: "smooth",
+            })
+          }
+          className="flex size-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg"
+          aria-label="Pergi ke bawah"
+          title="Ke bawah"
+        >
+          <ArrowDown size={18} />
+        </button>
+      </div>
     </main>
   );
 }
