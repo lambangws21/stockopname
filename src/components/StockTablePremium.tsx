@@ -1103,14 +1103,20 @@ export default function StockTablePremium({
             key={i}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-none transition hover:-translate-y-0.5 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+            className={`overflow-hidden rounded-2xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+              r.TotalQty <= 0
+                ? "border-red-400 bg-red-50 shadow-red-100 hover:border-red-600 dark:border-red-800 dark:bg-red-950/25 dark:shadow-none"
+                : "border-slate-300 bg-white hover:border-blue-300 dark:border-zinc-700 dark:bg-zinc-900"
+            }`}
           >
-            <div className={`hidden h-1 sm:block ${
-              r.Brand === "NORMMED"
-                ? "bg-emerald-500"
+            <div className={`h-1.5 ${
+              r.TotalQty <= 0
+                ? "bg-red-600"
+                : r.Brand === "NORMMED"
+                ? "bg-emerald-600"
                 : r.Brand === "ZIMMER"
-                ? "bg-blue-500"
-                : "bg-zinc-300"
+                ? "bg-violet-600"
+                : "bg-zinc-500"
             }`} />
             <div className="p-4">
             <div className="flex items-start justify-between gap-3">
@@ -1118,14 +1124,14 @@ export default function StockTablePremium({
                 <div className="flex flex-wrap gap-1.5">
                   <span className={`rounded-md px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide ${
                     r.Brand === "NORMMED"
-                      ? "bg-blue-50 text-blue-600"
+                      ? "bg-emerald-600 text-white"
                       : r.Brand === "ZIMMER"
-                      ? "bg-fuchsia-50 text-fuchsia-600"
-                      : "bg-zinc-100 text-zinc-500"
+                      ? "bg-violet-600 text-white"
+                      : "bg-zinc-700 text-white"
                   }`}>
                     {r.Brand || "Tanpa brand"}
                   </span>
-                  <span className="rounded-md bg-slate-100 px-2.5 py-1 text-[9px] font-bold uppercase text-slate-600">
+                  <span className="rounded-md bg-slate-200 px-2.5 py-1 text-[9px] font-bold uppercase text-slate-800 dark:bg-zinc-700 dark:text-zinc-100">
                     {r.Implant || "Tanpa kategori"}
                   </span>
                 </div>
@@ -1135,27 +1141,16 @@ export default function StockTablePremium({
               </div>
               <div className={`shrink-0 rounded-full border px-3 py-1 text-center text-[9px] font-bold ${
                 r.TotalQty <= 0
-                  ? "border-red-200 bg-red-50 text-red-600"
+                  ? "border-red-700 bg-red-600 text-white"
                   : r.TotalQty <= lowStockThreshold
-                  ? "border-amber-200 bg-amber-50 text-amber-600"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-600"
+                  ? "border-amber-600 bg-amber-500 text-white"
+                  : "border-emerald-700 bg-emerald-600 text-white"
               }`}>
                 {r.TotalQty <= 0
                   ? "Habis"
                   : r.TotalQty <= lowStockThreshold
                   ? "Perlu Refill"
                   : "Aman"}
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 px-4 py-2.5 text-xs dark:bg-zinc-800/70">
-              <div>
-                <div className="text-[9px] uppercase text-zinc-400">REF</div>
-                <div className="truncate font-bold">{highlight(r.NoStok) || "-"}</div>
-              </div>
-              <div>
-                <div className="text-[9px] uppercase text-zinc-400">LOT / Batch</div>
-                <div className="truncate font-bold">{highlight(r.Batch) || "-"}</div>
               </div>
             </div>
 
@@ -1184,8 +1179,7 @@ export default function StockTablePremium({
             )}
 
             <div className="mt-3 border-t pt-3">
-              <span className="text-[10px] text-zinc-400">Baris #{r.No}</span>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
                   setHistoryNo(r.No);

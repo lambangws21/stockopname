@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -853,6 +853,7 @@ function saveHandover(payload, skipLock) {
     }
   }
   const previous = rowNumber ? rows[rowNumber - 1] : [];
+  const previousStatus = String(previous[17] || "").toUpperCase();
   const requestedStatus = String(payload.Status || "DRAFT").toUpperCase();
   const status = ["DRAFT", "DIKIRIM", "DITERIMA"].indexOf(requestedStatus) >= 0
     ? requestedStatus
@@ -897,8 +898,12 @@ function saveHandover(payload, skipLock) {
     status === "DITERIMA" ? previous[19] || now : previous[19] || "",
     payload.AcceptanceNote || previous[20] || "",
     payload.by || Session.getActiveUser().getEmail() || "",
-    payload.SenderSignature || previous[22] || "",
-    payload.ReceiverSignature || previous[23] || "",
+    previousStatus === "DIKIRIM" || previousStatus === "DITERIMA"
+      ? previous[22] || ""
+      : payload.SenderSignature || previous[22] || "",
+    previousStatus === "DITERIMA"
+      ? previous[23] || ""
+      : payload.ReceiverSignature || previous[23] || "",
     inventoryPostedAt,
     payload.HospitalUpdatedAt || previous[25] || "",
   ];

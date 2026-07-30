@@ -14,7 +14,6 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
-  CalendarClock,
   ClipboardSignature,
   Copy,
   Eraser,
@@ -665,7 +664,7 @@ function OnlineHandoverContent() {
                   label="Tanda tangan pengirim"
                   name={form.Sender || "Pengirim"}
                   value={form.SenderSignature || ""}
-                  disabled={form.Status === "DITERIMA"}
+                  disabled={form.Status !== "DRAFT"}
                   onChange={(SenderSignature) =>
                     setForm({ ...form, SenderSignature })
                   }
@@ -674,7 +673,7 @@ function OnlineHandoverContent() {
                   label="Tanda tangan penerima"
                   name={form.Receiver || "Penerima"}
                   value={form.ReceiverSignature || ""}
-                  disabled={form.Status === "DITERIMA"}
+                  disabled={form.Status !== "DIKIRIM"}
                   onChange={(ReceiverSignature) =>
                     setForm({ ...form, ReceiverSignature })
                   }
@@ -1750,7 +1749,12 @@ function DocumentSummaryCard({
     (total, item) => total + Number(item.qtyIssued || 0),
     0
   );
-  const updatedAt = document.UpdatedAt || document.CreatedAt;
+  const statusTime =
+    document.Status === "DITERIMA"
+      ? document.AcceptedAt
+      : document.Status === "DIKIRIM"
+        ? document.SentAt
+        : document.UpdatedAt || document.CreatedAt;
 
   return (
     <button
@@ -1765,53 +1769,43 @@ function DocumentSummaryCard({
       <div className="p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="truncate text-[9px] font-black uppercase tracking-wide text-blue-600">
-              {document.ID || "DRAFT BELUM TERSIMPAN"}
-            </p>
-            <h3 className="mt-1 line-clamp-2 text-xs font-black leading-4">
+            <h3 className="line-clamp-2 text-xs font-black leading-4">
               {document.Hospital || "Rumah sakit belum diisi"}
             </h3>
+            <p className="mt-1 text-[9px] font-bold text-zinc-400">
+              {document.Procedure} · {document.Brand}
+            </p>
           </div>
           <StatusBadge status={document.Status} />
         </div>
 
-        <div className="mt-2 flex flex-wrap gap-1">
-          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-            {document.Procedure}
-          </span>
-          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-            {document.Brand}
-          </span>
-          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-            {selectedItems.length} item · {sentQty} pcs
-          </span>
-        </div>
-
-        <div className="mt-3 space-y-1.5 border-t pt-2">
-          <div className="flex items-center justify-between gap-3 text-[9px]">
-            <span className="text-zinc-400">Tanggal tindakan</span>
-            <b>{formatDateOnly(document.HandoverDate)}</b>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-[9px]">
-            <span className="inline-flex items-center gap-1 text-zinc-400">
-              <CalendarClock size={11} /> Diperbarui
+        <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-slate-200 dark:bg-zinc-700">
+          <div className="bg-slate-50 px-2 py-2 dark:bg-zinc-800">
+            <span className="block text-[8px] font-bold uppercase text-zinc-400">
+              Implant
             </span>
-            <b>{formatDateTime(updatedAt)}</b>
+            <b className="mt-0.5 block text-[10px]">
+              {selectedItems.length} item · {sentQty} pcs
+            </b>
           </div>
-          {document.SentAt && (
-            <div className="flex items-center justify-between gap-3 text-[9px]">
-              <span className="text-zinc-400">Dikirim</span>
-              <b>{formatDateTime(document.SentAt)}</b>
-            </div>
-          )}
-          {document.AcceptedAt && (
-            <div className="flex items-center justify-between gap-3 text-[9px]">
-              <span className="text-zinc-400">Diterima</span>
-              <b className="text-emerald-600">
-                {formatDateTime(document.AcceptedAt)}
-              </b>
-            </div>
-          )}
+          <div className="bg-slate-50 px-2 py-2 dark:bg-zinc-800">
+            <span className="block text-[8px] font-bold uppercase text-zinc-400">
+              Tanggal
+            </span>
+            <b className="mt-0.5 block text-[10px]">
+              {formatDateOnly(document.HandoverDate)}
+            </b>
+          </div>
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2 text-[8px] text-zinc-400">
+          <span>
+            {document.Status === "DITERIMA"
+              ? "Diterima"
+              : document.Status === "DIKIRIM"
+                ? "Dikirim"
+                : "Disimpan"}
+          </span>
+          <b className="text-zinc-500">{formatDateTime(statusTime)}</b>
         </div>
       </div>
     </button>
