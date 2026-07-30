@@ -4,6 +4,11 @@ const GAS_DEFAULT_URL =
   process.env.GAS_SUPER_SHEET_URL ||
   "https://script.google.com/macros/s/AKfycbzYixMvNT2jkoKl-P0973ijFkM0XCQRb8oEMyFKTB-BmbKd_HyirtYvdgO-v84xgVF3mA/exec";
 const GAS_EXTERNAL_URL = process.env.GAS_SUPER_SHEET_EXTERNAL_URL || "";
+const GAS_READ_TIMEOUT_MS = 25_000;
+const GAS_WRITE_TIMEOUT_MS = 45_000;
+const GAS_TRANSACTION_TIMEOUT_MS = 90_000;
+
+export const maxDuration = 120;
 
 class GasProxyError extends Error {
   status: number;
@@ -18,14 +23,15 @@ class GasProxyError extends Error {
 async function fetchGasJson(
   url: string,
   init?: RequestInit,
-  retrySafe = false
+  retrySafe = false,
+  timeoutMs = GAS_READ_TIMEOUT_MS
 ) {
   const attempts = retrySafe ? 2 : 1;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25_000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -62,7 +68,10 @@ async function fetchGasJson(
 
   if (lastError instanceof GasProxyError) throw lastError;
   if (lastError instanceof Error && lastError.name === "AbortError") {
-    throw new GasProxyError("Koneksi ke Google Apps Script timeout.");
+    throw new GasProxyError(
+      "Google Apps Script masih memproses transaksi terlalu lama. Periksa status dokumen sebelum mencoba kembali.",
+      504
+    );
   }
   throw new GasProxyError(
     lastError instanceof Error
@@ -203,11 +212,20 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const gasUrl = pickGasUrlForBody(body);
+    const action = String(body.action || "");
+    const transactionActions = new Set([
+      "handoverSave",
+      "handoverAccept",
+      "handoverSettle",
+    ]);
+    const timeoutMs = transactionActions.has(action)
+      ? GAS_TRANSACTION_TIMEOUT_MS
+      : GAS_WRITE_TIMEOUT_MS;
     return NextResponse.json(await fetchGasJson(gasUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }));
+    }, false, timeoutMs));
   } catch (error) {
     return gasErrorResponse(error);
   }

@@ -10,8 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
-  STOCK_IMPLANT_CATEGORIES,
   STOCK_IMPLANT_CATEGORY_LABELS,
+  STOCK_PROCEDURE_CATEGORIES,
+  STOCK_COMPONENT_CATEGORIES,
 } from "@/lib/stockCategories";
 
 function toSafeNumber(value: unknown): number {
@@ -237,10 +238,18 @@ function ModalContent({
               <SelectField
                 label="Implant"
                 value={form.Implant}
-                options={STOCK_IMPLANT_CATEGORIES.map((category) => ({
-                  value: category,
-                  label: STOCK_IMPLANT_CATEGORY_LABELS[category],
-                }))}
+                options={[
+                  ...STOCK_PROCEDURE_CATEGORIES.map((category) => ({
+                    value: category,
+                    label: STOCK_IMPLANT_CATEGORY_LABELS[category],
+                    group: "Tindakan utama",
+                  })),
+                  ...STOCK_COMPONENT_CATEGORIES.map((category) => ({
+                    value: category,
+                    label: STOCK_IMPLANT_CATEGORY_LABELS[category],
+                    group: "Komponen implant",
+                  })),
+                ]}
                 onChange={(v) =>
                   setForm({
                     ...form,
@@ -399,7 +408,9 @@ function SelectField({
 }: {
   label: string;
   value: string;
-  options: Array<string | { value: string; label: string }>;
+  options: Array<
+    string | { value: string; label: string; group?: string }
+  >;
   onChange: (v: string) => void;
 }) {
   return (
@@ -411,7 +422,53 @@ function SelectField({
         className="h-9 w-full rounded-md border bg-transparent px-3 text-sm"
       >
         <option value="">Pilih {label}</option>
-        {options.map((option) => {
+        {Array.from(
+          new Set(
+            options
+              .filter(
+                (
+                  option
+                ): option is {
+                  value: string;
+                  label: string;
+                  group?: string;
+                } => typeof option !== "string" && Boolean(option.group)
+              )
+              .map((option) => option.group as string)
+          )
+        ).length > 0
+          ? Array.from(
+              new Set(
+                options
+                  .filter(
+                    (option): option is {
+                      value: string;
+                      label: string;
+                      group?: string;
+                    } => typeof option !== "string"
+                  )
+                  .map((option) => option.group || "")
+              )
+            ).map((group) => (
+              <optgroup key={group} label={group}>
+                {options
+                  .filter(
+                    (option): option is {
+                      value: string;
+                      label: string;
+                      group?: string;
+                    } =>
+                      typeof option !== "string" &&
+                      (option.group || "") === group
+                  )
+                  .map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+              </optgroup>
+            ))
+          : options.map((option) => {
           const optionValue =
             typeof option === "string" ? option : option.value;
           const optionLabel =

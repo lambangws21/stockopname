@@ -1,9 +1,10 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 21;
+const APP_VERSION = 27;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
+const HANDOVER_SHEET = "OnlineHandover";
 const STOCK_SPREADSHEET_ID =
   "1vGg0gPbaedxuVbvQhXy4oh9sX34RYHF-B3SJySuORkw";
 const STOCK_SHEET_GID = "136121031";
@@ -21,6 +22,7 @@ const IMPLANT_OPTIONS = [
   "BONE CEMENT",
   "CUP ACETABULUM",
   "LINER CUP",
+  "LINER BIPOLAR",
   "BONE SCREW",
   "STEM TKR",
 ];
@@ -58,6 +60,40 @@ const STOCK_WARNING_HEADERS = [
   "Note",
   "LastMovement",
   "ResolvedAt",
+  "WorkflowStatus",
+  "PIC",
+  "TargetRefill",
+  "LogisticsNote",
+  "InformedAt",
+  "InformedBy",
+];
+const HANDOVER_HEADERS = [
+  "ID",
+  "CreatedAt",
+  "UpdatedAt",
+  "Procedure",
+  "Brand",
+  "Hospital",
+  "Surgeon",
+  "ApprovedBy",
+  "HandoverDate",
+  "SetName",
+  "ItemsJson",
+  "InstrumentsJson",
+  "Sender",
+  "Checker1",
+  "Checker2",
+  "AcknowledgedBy",
+  "Receiver",
+  "Status",
+  "SentAt",
+  "AcceptedAt",
+  "AcceptanceNote",
+  "By",
+  "SenderSignature",
+  "ReceiverSignature",
+  "InventoryPostedAt",
+  "HospitalUpdatedAt",
 ];
 const CUSTOMER_HISTORY_HEADERS = [
   "Timestamp",
@@ -433,6 +469,8 @@ function setupApplicationSheets() {
   warningSheet.setFrozenRows(1);
   warningSheet.getRange("A:A").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   warningSheet.getRange("M:M").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  warningSheet.getRange("P:P").setNumberFormat("yyyy-mm-dd");
+  warningSheet.getRange("R:R").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   warningSheet.setColumnWidth(6, 280);
   warningSheet.setColumnWidth(11, 330);
   warningSheet.setColumnWidth(12, 280);
@@ -440,6 +478,19 @@ function setupApplicationSheets() {
   const customerSheet = getCustomerSheet();
   const customerHistorySheet = getCustomerHistorySheet();
   const customerUsageSheet = getCustomerUsageSheet();
+  const handoverSheet = getOrCreateSheet(HANDOVER_SHEET);
+  ensureHeaderRow(handoverSheet, HANDOVER_HEADERS);
+  handoverSheet
+    .getRange(1, 1, 1, HANDOVER_HEADERS.length)
+    .setValues([HANDOVER_HEADERS])
+    .setBackground("#0f172a")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold");
+  handoverSheet.setFrozenRows(1);
+  handoverSheet.getRange("B:C").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  handoverSheet.getRange("I:I").setNumberFormat("yyyy-mm-dd");
+  handoverSheet.getRange("S:T").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  handoverSheet.getRange("Y:Z").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   syncStockWarnings();
 
   return {
@@ -455,8 +506,582 @@ function setupApplicationSheets() {
       customerSheet.getName(),
       customerHistorySheet.getName(),
       customerUsageSheet.getName(),
+      handoverSheet.getName(),
     ],
   };
+}
+
+function getHandoverSheet() {
+  const sheet = getOrCreateSheet(HANDOVER_SHEET);
+  ensureHeaderRow(sheet, HANDOVER_HEADERS);
+  return sheet;
+}
+
+function listHandovers(params) {
+  const sheet = getHandoverSheet();
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) return { status: "success", data: [] };
+  const headers = rows[0];
+  const targetId = String((params && params.id) || "").trim();
+  const data = rows
+    .slice(1)
+    .map(function (row, index) {
+      const item = { Row: index + 2 };
+      headers.forEach(function (header, column) {
+        item[header] = row[column] === undefined ? "" : row[column];
+      });
+      try {
+        item.Items = JSON.parse(String(item.ItemsJson || "[]"));
+      } catch (err) {
+        item.Items = [];
+      }
+      try {
+        item.Instruments = JSON.parse(String(item.InstrumentsJson || "[]"));
+      } catch (err) {
+        item.Instruments = [];
+      }
+      delete item.ItemsJson;
+      delete item.InstrumentsJson;
+      // Daftar dokumen dipakai dashboard dan tidak perlu membawa data gambar
+      // tanda tangan yang besar. Detail lengkap hanya dikirim saat id diminta.
+      if (!targetId) {
+        item.SenderSignature = "";
+        item.ReceiverSignature = "";
+        item.Instruments = [];
+      }
+      return item;
+    })
+    .filter(function (item) {
+      return !targetId || String(item.ID) === targetId;
+    })
+    .reverse();
+  return { status: "success", data: data };
+}
+
+function resolveHandoverStockRow(stockRows, item) {
+  const requestedRow = safeNumber(item.stockRow);
+  if (requestedRow >= 2 && requestedRow <= stockRows.length) {
+    const candidate = rowArrayToObject(stockRows[requestedRow - 1], requestedRow);
+    if (
+      String(candidate.NoStok) === String(item.partNumber) &&
+      String(candidate.Batch) === String(item.batch)
+    ) {
+      return requestedRow;
+    }
+  }
+  for (var i = 1; i < stockRows.length; i++) {
+    if (
+      String(stockRows[i][0]) === String(item.partNumber) &&
+      String(stockRows[i][4]) === String(item.batch)
+    ) {
+      return i + 1;
+    }
+  }
+  return 0;
+}
+
+function buildHistoryBatchRow(entry) {
+  const before = entry.before || {};
+  const after = entry.after || {};
+  const fields = {};
+  Object.keys(before).forEach(function (key) {
+    fields[key] = true;
+  });
+  Object.keys(after).forEach(function (key) {
+    fields[key] = true;
+  });
+  const changes = [];
+  Object.keys(fields).forEach(function (field) {
+    if (String(before[field]) !== String(after[field])) {
+      changes.push({
+        field: field,
+        before: before[field] === undefined ? "" : String(before[field]),
+        after: after[field] === undefined ? "" : String(after[field]),
+      });
+    }
+  });
+  if (!changes.length) return null;
+  return [
+    new Date(),
+    entry.action,
+    entry.sheetName || DEFAULT_SHEET,
+    safeNumber(entry.no),
+    JSON.stringify(changes),
+    entry.by || Session.getActiveUser().getEmail() || "",
+  ];
+}
+
+function appendHistoryBatch(entries) {
+  const values = (entries || [])
+    .map(buildHistoryBatchRow)
+    .filter(function (row) {
+      return Boolean(row);
+    });
+  if (!values.length) return;
+  const sheet = getSheet("History");
+  sheet
+    .getRange(sheet.getLastRow() + 1, 1, values.length, STOCK_HISTORY_HEADERS.length)
+    .setValues(values);
+}
+
+function updateWarningsBatch(entries) {
+  if (!entries || !entries.length) return;
+  const sheet = getStockWarningSheet();
+  const rows = sheet.getDataRange().getValues();
+  const output = rows.length > 1 ? rows.slice(1) : [];
+  const indexByKey = {};
+  output.forEach(function (row, index) {
+    indexByKey[
+      [String(row[2]), String(row[4]), String(row[8])].join("|")
+    ] = index;
+  });
+
+  entries.forEach(function (entry) {
+    const stockRow = entry.stockRow;
+    const key = [
+      String(entry.sheetName || DEFAULT_SHEET),
+      String(stockRow.NoStok || "").trim(),
+      String(stockRow.Batch || "").trim(),
+    ].join("|");
+    const targetIndex =
+      indexByKey[key] === undefined ? -1 : indexByKey[key];
+    const existing = targetIndex >= 0 ? output[targetIndex] : [];
+    const remaining = safeNumber(stockRow.TotalQty);
+    const isWarning = remaining <= LOW_STOCK_THRESHOLD;
+    if (!isWarning && targetIndex < 0) return;
+    const now = new Date();
+    const wasResolved = String(existing[1] || "") === "SELESAI";
+    const workflowStatus = isWarning
+      ? wasResolved || !existing[13]
+        ? "BELUM DIPROSES"
+        : existing[13]
+      : "SELESAI";
+    const values = [
+      now,
+      isWarning ? (remaining <= 0 ? "HABIS" : "AKAN HABIS") : "SELESAI",
+      entry.sheetName || DEFAULT_SHEET,
+      safeNumber(entry.no),
+      stockRow.NoStok || "",
+      stockRow.Deskripsi || "",
+      stockRow.Implant || "",
+      stockRow.Brand || "",
+      stockRow.Batch || "",
+      remaining,
+      isWarning
+        ? remaining <= 0
+          ? "WARNING: Implant sudah habis dan tidak tersedia lagi. Segera lakukan refill."
+          : "WARNING: Sisa 1. Jika digunakan lagi implant akan habis dan tidak tersedia."
+        : "Stok sudah tersedia kembali.",
+      entry.lastMovement || stockRow.KET || "",
+      isWarning ? "" : now,
+      workflowStatus,
+      existing[14] || "",
+      existing[15] || "",
+      existing[16] || "",
+      existing[17] || "",
+      existing[18] || "",
+    ];
+    if (targetIndex >= 0) {
+      output[targetIndex] = values;
+    } else {
+      indexByKey[key] = output.length;
+      output.push(values);
+    }
+  });
+
+  if (output.length) {
+    sheet
+      .getRange(2, 1, output.length, STOCK_WARNING_HEADERS.length)
+      .setValues(
+        output.map(function (row) {
+          return STOCK_WARNING_HEADERS.map(function (_header, index) {
+            return row[index] === undefined ? "" : row[index];
+          });
+        })
+      );
+  }
+}
+
+function dispatchHandoverInventory(payload) {
+  const stockSheet = getOrCreateSheet(DEFAULT_SHEET);
+  normalizeSheet(stockSheet);
+  const stockRows = stockSheet.getDataRange().getValues();
+  const items = Array.isArray(payload.Items) ? payload.Items : [];
+  const requiredByRow = {};
+  const resolvedRows = [];
+
+  items.forEach(function (item) {
+    const qty = item.selected
+      ? Math.max(0, safeNumber(item.qtyIssued))
+      : 0;
+    const requirement = Math.max(0, safeNumber(item.stdQty));
+    if (qty > requirement) {
+      throw new Error(
+        "Jumlah kirim " +
+          String(item.partNumber || "-") +
+          " melebihi kebutuhan RS (" +
+          requirement +
+          " pcs)"
+      );
+    }
+    const rowNumber = resolveHandoverStockRow(stockRows, item);
+    resolvedRows.push(rowNumber);
+    if (qty <= 0) return;
+    if (!rowNumber) {
+      throw new Error(
+        "Stock " + String(item.partNumber || "-") + " tidak ditemukan"
+      );
+    }
+    requiredByRow[rowNumber] = safeNumber(requiredByRow[rowNumber]) + qty;
+  });
+
+  Object.keys(requiredByRow).forEach(function (rowKey) {
+    const rowNumber = safeNumber(rowKey);
+    const available = safeNumber(stockRows[rowNumber - 1][5]);
+    if (available < requiredByRow[rowKey]) {
+      throw new Error(
+        "Stock " +
+          String(stockRows[rowNumber - 1][0] || "-") +
+          " tidak cukup. Tersedia " +
+          available +
+          ", diminta " +
+          requiredByRow[rowKey]
+      );
+    }
+  });
+
+  const historyEntries = [];
+  const warningEntries = [];
+  const preparedItems = items.map(function (item, index) {
+    const qty = item.selected
+      ? Math.max(0, safeNumber(item.qtyIssued))
+      : 0;
+    const rowNumber = resolvedRows[index];
+    const officeBefore = rowNumber
+      ? safeNumber(stockRows[rowNumber - 1][5])
+      : 0;
+    if (qty > 0) {
+      const stockIndex = rowNumber - 1;
+      const before = rowArrayToObject(stockRows[stockIndex], rowNumber);
+      const updated = stockRows[stockIndex].slice();
+      updated[5] = safeNumber(updated[5]) - qty;
+      updated[6] = updated[5];
+      updated[9] = buildMovementDescription(
+        "MOBILISASI_KELUAR",
+        qty,
+        "Serah terima " +
+          String(payload.ID || "") +
+          " ke " +
+          String(payload.Hospital || "rumah sakit")
+      );
+      stockRows[stockIndex] = updated;
+      const after = rowArrayToObject(updated, rowNumber);
+      historyEntries.push({
+        action: "MOBILISASI_KELUAR",
+        no: rowNumber,
+        before: before,
+        after: after,
+        by: payload.by || payload.Sender || "Serah Terima Online",
+      });
+      warningEntries.push({
+        no: rowNumber,
+        stockRow: after,
+        lastMovement: updated[9],
+      });
+    }
+    return Object.assign({}, item, {
+      stockRow: rowNumber,
+      officeBefore: officeBefore,
+      officeAfter: Math.max(0, officeBefore - qty),
+      qtyIssued: qty,
+      hospitalQty: qty,
+      usedQty: Math.max(0, safeNumber(item.usedQty)),
+      returnedQty: Math.max(0, safeNumber(item.returnedQty)),
+      locationStatus: qty > 0 ? "DI RUMAH SAKIT" : "TIDAK DIKIRIM",
+    });
+  });
+  if (historyEntries.length) {
+    stockSheet
+      .getRange(2, 1, stockRows.length - 1, MASTER_HEADERS.length)
+      .setValues(
+        stockRows.slice(1).map(function (row) {
+          return row.slice(0, MASTER_HEADERS.length);
+        })
+      );
+    appendHistoryBatch(historyEntries);
+    updateWarningsBatch(warningEntries);
+  }
+  return preparedItems;
+}
+
+function recordHospitalImplantUsage(no, qty, note, by) {
+  if (qty <= 0) return;
+  const sheet = getOrCreateSheet(DEFAULT_SHEET);
+  normalizeSheet(sheet);
+  const rows = sheet.getDataRange().getValues();
+  const index = safeNumber(no) - 1;
+  if (index < 1 || index >= rows.length) {
+    throw new Error("Baris stock untuk pemakaian tidak ditemukan");
+  }
+  const old = rows[index];
+  const before = rowArrayToObject(old, no);
+  const updated = old.slice();
+  updated[7] = safeNumber(updated[7]) + qty;
+  updated[6] = safeNumber(updated[5]);
+  updated[9] = buildMovementDescription("OPERASI", qty, note);
+  sheet.getRange(index + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
+  const after = rowArrayToObject(updated, no);
+  upsertStockWarning(sheet.getName(), no, after, updated[9]);
+  logHistory("OPERASI", sheet.getName(), no, before, after, by);
+}
+
+function saveHandover(payload, skipLock) {
+  const lock = skipLock ? null : LockService.getScriptLock();
+  if (lock && !lock.tryLock(30000)) {
+    return { status: "error", message: "Transaksi sedang diproses, coba lagi" };
+  }
+  try {
+  const sheet = getHandoverSheet();
+  const rows = sheet.getDataRange().getValues();
+  const now = new Date();
+  const id = String(payload.ID || "").trim() || "ST-" + Utilities.getUuid();
+  let rowNumber = 0;
+  for (var i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === id) {
+      rowNumber = i + 1;
+      break;
+    }
+  }
+  const previous = rowNumber ? rows[rowNumber - 1] : [];
+  const requestedStatus = String(payload.Status || "DRAFT").toUpperCase();
+  const status = ["DRAFT", "DIKIRIM", "DITERIMA"].indexOf(requestedStatus) >= 0
+    ? requestedStatus
+    : "DRAFT";
+  let inventoryPostedAt = previous[24] || "";
+  let preparedItems = Array.isArray(payload.Items) ? payload.Items : [];
+  if (status === "DIKIRIM" && !inventoryPostedAt) {
+    payload.ID = id;
+    preparedItems = dispatchHandoverInventory(
+      Object.assign({}, payload, { Items: preparedItems })
+    );
+    inventoryPostedAt = now;
+  } else if (inventoryPostedAt && rowNumber && !payload._allowPostedItems) {
+    try {
+      preparedItems = JSON.parse(String(previous[10] || "[]"));
+    } catch (err) {
+      preparedItems = Array.isArray(payload.Items) ? payload.Items : [];
+    }
+  }
+  const values = [
+    id,
+    previous[1] || now,
+    now,
+    payload.Procedure || "",
+    payload.Brand || "NORMMED",
+    payload.Hospital || "",
+    payload.Surgeon || "",
+    payload.ApprovedBy || "",
+    payload.HandoverDate || "",
+    payload.SetName || "",
+    JSON.stringify(preparedItems),
+    JSON.stringify(
+      Array.isArray(payload.Instruments) ? payload.Instruments : []
+    ),
+    payload.Sender || "",
+    payload.Checker1 || "",
+    payload.Checker2 || "",
+    payload.AcknowledgedBy || "",
+    payload.Receiver || previous[16] || "",
+    status,
+    status === "DIKIRIM" ? previous[18] || now : previous[18] || "",
+    status === "DITERIMA" ? previous[19] || now : previous[19] || "",
+    payload.AcceptanceNote || previous[20] || "",
+    payload.by || Session.getActiveUser().getEmail() || "",
+    payload.SenderSignature || previous[22] || "",
+    payload.ReceiverSignature || previous[23] || "",
+    inventoryPostedAt,
+    payload.HospitalUpdatedAt || previous[25] || "",
+  ];
+  if (rowNumber) {
+    sheet.getRange(rowNumber, 1, 1, HANDOVER_HEADERS.length).setValues([values]);
+  } else {
+    sheet.appendRow(values);
+  }
+  return {
+    status: "success",
+    ID: id,
+    data: listHandovers({ id: id }).data[0],
+  };
+  } finally {
+    if (lock) lock.releaseLock();
+  }
+}
+
+function acceptHandover(payload) {
+  const current = listHandovers({ id: payload.ID }).data[0];
+  if (!current) {
+    return { status: "error", message: "Dokumen serah terima tidak ditemukan" };
+  }
+  if (!String(payload.Receiver || "").trim()) {
+    return { status: "error", message: "Nama penerima wajib diisi" };
+  }
+  current.Status = "DITERIMA";
+  current.Receiver = payload.Receiver;
+  current.AcceptanceNote = payload.AcceptanceNote || "";
+  current.ReceiverSignature =
+    payload.ReceiverSignature || current.ReceiverSignature || "";
+  current.SenderSignature =
+    payload.SenderSignature || current.SenderSignature || "";
+  current.ReceiverSignature =
+    payload.ReceiverSignature || current.ReceiverSignature || "";
+  current.Items = Array.isArray(payload.Items) ? payload.Items : current.Items;
+  current.Instruments = Array.isArray(payload.Instruments)
+    ? payload.Instruments
+    : current.Instruments;
+  return saveHandover(current);
+}
+
+function settleHandoverInventory(payload) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { status: "error", message: "Transaksi sedang diproses, coba lagi" };
+  }
+  try {
+    const current = listHandovers({ id: payload.ID }).data[0];
+    if (!current) {
+      return { status: "error", message: "Dokumen serah terima tidak ditemukan" };
+    }
+    if (!current.InventoryPostedAt) {
+      return { status: "error", message: "Implant belum dikirim dari office" };
+    }
+    if (String(current.Status) !== "DITERIMA") {
+      return {
+        status: "error",
+        message: "Dokumen harus diterima sebelum pemakaian implant dicatat",
+      };
+    }
+    const requestedItems = Array.isArray(payload.Items) ? payload.Items : [];
+    const currentItems = Array.isArray(current.Items) ? current.Items : [];
+    const stockSheet = getOrCreateSheet(DEFAULT_SHEET);
+    normalizeSheet(stockSheet);
+    const stockRows = stockSheet.getDataRange().getValues();
+    const historyEntries = [];
+    const warningByRow = {};
+    const updatedItems = currentItems.map(function (item, index) {
+      const requested = requestedItems[index] || item;
+      const hospitalQty = Math.max(0, safeNumber(item.hospitalQty));
+      const previousUsed = Math.max(0, safeNumber(item.usedQty));
+      const previousReturned = Math.max(0, safeNumber(item.returnedQty));
+      const nextUsed = Math.max(previousUsed, safeNumber(requested.usedQty));
+      const nextReturned = Math.max(
+        previousReturned,
+        safeNumber(requested.returnedQty)
+      );
+      if (nextUsed + nextReturned > hospitalQty) {
+        throw new Error(
+          "Pemakaian " +
+            String(item.partNumber || "-") +
+            " melebihi jumlah di rumah sakit"
+        );
+      }
+      const usedDelta = nextUsed - previousUsed;
+      const returnedDelta = nextReturned - previousReturned;
+      const stockRow = safeNumber(item.stockRow);
+      const movementNote =
+        "Dokumen " +
+        String(current.ID) +
+        " • " +
+        String(current.Hospital || "Rumah sakit");
+      const stockIndex = stockRow - 1;
+      if (
+        (usedDelta > 0 || returnedDelta > 0) &&
+        (stockIndex < 1 || stockIndex >= stockRows.length)
+      ) {
+        throw new Error(
+          "Baris stock " + String(item.partNumber || "-") + " tidak ditemukan"
+        );
+      }
+      if (usedDelta > 0) {
+        const beforeUsed = rowArrayToObject(stockRows[stockIndex], stockRow);
+        const usedRow = stockRows[stockIndex].slice();
+        usedRow[7] = safeNumber(usedRow[7]) + usedDelta;
+        usedRow[6] = safeNumber(usedRow[5]);
+        usedRow[9] = buildMovementDescription(
+          "OPERASI",
+          usedDelta,
+          movementNote
+        );
+        stockRows[stockIndex] = usedRow;
+        historyEntries.push({
+          action: "OPERASI",
+          no: stockRow,
+          before: beforeUsed,
+          after: rowArrayToObject(usedRow, stockRow),
+          by: payload.by || current.Receiver || "Rumah Sakit",
+        });
+      }
+      if (returnedDelta > 0) {
+        const beforeReturn = rowArrayToObject(stockRows[stockIndex], stockRow);
+        const returnedRow = stockRows[stockIndex].slice();
+        returnedRow[5] = safeNumber(returnedRow[5]) + returnedDelta;
+        returnedRow[6] = returnedRow[5];
+        returnedRow[9] = buildMovementDescription(
+          "MOBILISASI_MASUK",
+          returnedDelta,
+          "Kembali dari " + movementNote
+        );
+        stockRows[stockIndex] = returnedRow;
+        historyEntries.push({
+          action: "MOBILISASI_MASUK",
+          no: stockRow,
+          before: beforeReturn,
+          after: rowArrayToObject(returnedRow, stockRow),
+          by: payload.by || current.Receiver || "Rumah Sakit",
+        });
+      }
+      if (usedDelta > 0 || returnedDelta > 0) {
+        warningByRow[stockRow] = {
+          no: stockRow,
+          stockRow: rowArrayToObject(stockRows[stockIndex], stockRow),
+          lastMovement: stockRows[stockIndex][9],
+        };
+      }
+      const remaining = hospitalQty - nextUsed - nextReturned;
+      return Object.assign({}, item, {
+        usedQty: nextUsed,
+        returnedQty: nextReturned,
+        hospitalRemaining: remaining,
+        locationStatus:
+          remaining > 0
+            ? "DI RUMAH SAKIT"
+            : nextUsed > 0 && nextReturned === 0
+              ? "TERPAKAI"
+              : "SELESAI",
+      });
+    });
+    if (historyEntries.length) {
+      stockSheet
+        .getRange(2, 1, stockRows.length - 1, MASTER_HEADERS.length)
+        .setValues(
+          stockRows.slice(1).map(function (row) {
+            return row.slice(0, MASTER_HEADERS.length);
+          })
+        );
+      appendHistoryBatch(historyEntries);
+      updateWarningsBatch(
+        Object.keys(warningByRow).map(function (key) {
+          return warningByRow[key];
+        })
+      );
+    }
+    current.Items = updatedItems;
+    current.HospitalUpdatedAt = new Date();
+    current.By = payload.by || current.Receiver || current.By || "";
+    current._allowPostedItems = true;
+    return saveHandover(current, true);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getStockWarningSheet() {
@@ -494,6 +1119,13 @@ function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
 
   if (!isWarning && !targetRow) return;
 
+  const existing = targetRow ? rows[targetRow - 1] : [];
+  const wasResolved = String(existing[1] || "") === "SELESAI";
+  const workflowStatus = isWarning
+    ? wasResolved || !existing[13]
+      ? "BELUM DIPROSES"
+      : existing[13]
+    : "SELESAI";
   const values = [
     now,
     isWarning ? status : "SELESAI",
@@ -508,6 +1140,12 @@ function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
     isWarning ? note : "Stok sudah tersedia kembali.",
     lastMovement || stockRow.KET || "",
     isWarning ? "" : now,
+    workflowStatus,
+    existing[14] || "",
+    existing[15] || "",
+    existing[16] || "",
+    existing[17] || "",
+    existing[18] || "",
   ];
 
   if (targetRow) {
@@ -517,6 +1155,81 @@ function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
   } else {
     warningSheet.appendRow(values);
   }
+}
+
+function listStockWarnings(params) {
+  const sheet = getStockWarningSheet();
+  const rows = sheet.getDataRange().getValues();
+  if (rows.length < 2) return { status: "success", data: [] };
+  const headers = rows[0];
+  const includeResolved =
+    String((params && params.includeResolved) || "").toLowerCase() === "true";
+  const data = rows
+    .slice(1)
+    .map(function (row, index) {
+      const item = { Row: index + 2 };
+      headers.forEach(function (header, column) {
+        item[header] = row[column] === undefined ? "" : row[column];
+      });
+      return item;
+    })
+    .filter(function (item) {
+      return includeResolved || String(item.Status) !== "SELESAI";
+    })
+    .reverse();
+  return { status: "success", data: data };
+}
+
+function updateStockWarningWorkflow(payload) {
+  const sheet = getStockWarningSheet();
+  const rows = sheet.getDataRange().getValues();
+  const rowNumber = safeNumber(payload.Row);
+  if (rowNumber < 2 || rowNumber > rows.length) {
+    return { status: "error", message: "Warning stock tidak ditemukan" };
+  }
+
+  const allowed = [
+    "BELUM DIPROSES",
+    "SUDAH DIINFORMASIKAN",
+    "SEDANG DIPESAN",
+    "DALAM PENGIRIMAN",
+    "SELESAI",
+  ];
+  const current = rows[rowNumber - 1].slice();
+  const nextStatus = String(payload.WorkflowStatus || current[13] || "")
+    .trim()
+    .toUpperCase();
+  if (allowed.indexOf(nextStatus) < 0) {
+    return { status: "error", message: "Status workflow tidak valid" };
+  }
+
+  current[0] = new Date();
+  current[13] = nextStatus;
+  current[14] = hasOwn(payload, "PIC") ? payload.PIC || "" : current[14];
+  current[15] = hasOwn(payload, "TargetRefill")
+    ? payload.TargetRefill || ""
+    : current[15];
+  current[16] = hasOwn(payload, "LogisticsNote")
+    ? payload.LogisticsNote || ""
+    : current[16];
+  if (
+    nextStatus === "SUDAH DIINFORMASIKAN" &&
+    String(current[17] || "").trim() === ""
+  ) {
+    current[17] = new Date();
+    current[18] =
+      payload.by || Session.getActiveUser().getEmail() || "Logistik";
+  }
+
+  sheet
+    .getRange(rowNumber, 1, 1, STOCK_WARNING_HEADERS.length)
+    .setValues([current.slice(0, STOCK_WARNING_HEADERS.length)]);
+  return {
+    status: "success",
+    data: listStockWarnings({ includeResolved: true }).data.filter(function (item) {
+      return safeNumber(item.Row) === rowNumber;
+    })[0],
+  };
 }
 
 function syncStockWarnings() {
@@ -1861,6 +2574,8 @@ function doGet(e) {
     if (action === "history") return cors(getHistory(req));
     if (action === "setupSheet") return cors(setupApplicationSheets());
     if (action === "syncWarnings") return cors(syncStockWarnings());
+    if (action === "warningList") return cors(listStockWarnings(req.parameter));
+    if (action === "handoverList") return cors(listHandovers(req.parameter));
     if (action === "customerCapabilities") {
       return cors({
         status: "success",
@@ -1908,6 +2623,12 @@ function doPost(e) {
     if (payload.action === "customerUpsert") return cors(upsertCustomer(payload));
     if (payload.action === "customerDelete") return cors(deleteCustomer(payload));
     if (payload.action === "customerJourney") return cors(advanceCustomerJourney(payload));
+    if (payload.action === "warningUpdate") return cors(updateStockWarningWorkflow(payload));
+    if (payload.action === "handoverSave") return cors(saveHandover(payload));
+    if (payload.action === "handoverAccept") return cors(acceptHandover(payload));
+    if (payload.action === "handoverSettle") {
+      return cors(settleHandoverInventory(payload));
+    }
     if (payload.methodOverride === "PUT") return cors(handleUpdate(payload));
     if (payload.methodOverride === "DELETE") return cors(handleDelete(payload));
     if (payload.action === "mutasi") return cors(handleMutasi(payload));

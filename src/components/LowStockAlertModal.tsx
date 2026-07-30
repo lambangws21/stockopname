@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   Copy,
   MessageCircle,
   PackageX,
@@ -29,6 +30,7 @@ export default function LowStockAlertModal({
   const [copied, setCopied] = useState(false);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
   const [excludedBrands, setExcludedBrands] = useState<Set<string>>(new Set());
+  const [shareExpanded, setShareExpanded] = useState(false);
 
   const warningRows = useMemo(
     () =>
@@ -80,14 +82,18 @@ export default function LowStockAlertModal({
 
   return (
     <div className="fixed inset-0 z-[10030] flex items-end justify-center bg-zinc-950/60 backdrop-blur-sm sm:items-center sm:p-4">
-      <section className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-3xl">
-        <header className="flex items-start justify-between gap-3 border-b bg-linear-to-r from-red-600 to-orange-500 px-5 py-5 text-white">
+      <section className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:rounded-3xl">
+        <header className="relative flex items-start justify-between gap-3 border-b bg-[#991b1b] px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-5 sm:py-5">
+          <span className="absolute left-1/2 top-2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/30 sm:hidden" />
           <div className="flex gap-3">
             <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25">
               <AlertTriangle size={23} />
             </span>
             <div>
-              <h2 className="text-lg font-bold">Peringatan Stok Implant</h2>
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-red-200">
+                Perlu tindakan logistik
+              </p>
+              <h2 className="mt-0.5 text-lg font-black">Warning Stock Implant</h2>
               <p className="mt-1 text-xs text-red-50">
                 Periksa item berikut sebelum kebutuhan operasi berikutnya.
               </p>
@@ -103,33 +109,35 @@ export default function LowStockAlertModal({
           </button>
         </header>
 
-        <div className="grid grid-cols-2 divide-x border-b bg-zinc-50/70 text-center dark:bg-zinc-950/40">
+        <div className="grid grid-cols-2 gap-2 border-b bg-slate-50 p-3 text-left dark:bg-zinc-950/40">
           <button
             type="button"
             onClick={() => onShowStatus("OUT")}
-            className="px-4 py-3 hover:bg-red-50 dark:hover:bg-red-950/20"
+            className="rounded-2xl border border-red-100 bg-white px-4 py-3 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-900 dark:hover:bg-red-950/20"
           >
             <p className="text-2xl font-black text-red-600">
               {visibleOutOfStock.length}
             </p>
-            <p className="text-[10px] font-semibold text-zinc-500">Stok habis</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Stok habis</p>
+            <p className="mt-0.5 text-[9px] text-zinc-400">Harus segera direfill</p>
           </button>
           <button
             type="button"
             onClick={() => onShowStatus("LOW")}
-            className="px-4 py-3 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+            className="rounded-2xl border border-amber-100 bg-white px-4 py-3 hover:bg-amber-50 dark:border-amber-900 dark:bg-zinc-900 dark:hover:bg-amber-950/20"
           >
             <p className="text-2xl font-black text-amber-600">
               {visibleLowStock.length}
             </p>
             <p className="text-[10px] font-semibold text-zinc-500">
-              Stok ≤ {threshold}
+              Stok menipis
             </p>
+            <p className="mt-0.5 text-[9px] text-zinc-400">Tersisa maks. {threshold}</p>
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
-          <section className="overflow-hidden rounded-2xl border border-blue-100 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/20">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50 p-3 dark:bg-zinc-950/50 sm:p-5">
+          <section className="overflow-hidden rounded-2xl border bg-white dark:bg-zinc-900">
             <div className="border-b border-blue-100 bg-white/70 px-3.5 py-3 dark:border-blue-900 dark:bg-zinc-900/60">
               <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
                 Brand stok menipis yang ditampilkan
@@ -158,7 +166,12 @@ export default function LowStockAlertModal({
             </div>
 
             <div className="p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setShareExpanded((value) => !value)}
+              className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+              aria-expanded={shareExpanded}
+            >
               <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
                 <Share2 size={15} />
                 <h3 className="text-xs font-bold">Bagikan Info Logistik</h3>
@@ -166,6 +179,15 @@ export default function LowStockAlertModal({
                   {selectedRows.length} dipilih
                 </span>
               </div>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600">
+                {shareExpanded ? "Tutup" : "Buka"}
+                <ChevronDown
+                  size={13}
+                  className={`transition ${shareExpanded ? "rotate-180" : ""}`}
+                />
+              </span>
+            </button>
+            <div className="mt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => {
@@ -240,6 +262,8 @@ export default function LowStockAlertModal({
               </div>
             </div>
 
+            {shareExpanded && (
+            <>
             <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <button
                 type="button"
@@ -281,6 +305,8 @@ export default function LowStockAlertModal({
               placeholder="Catatan logistik, contoh: Dibutuhkan sebelum operasi hari Jumat."
               className="mt-2.5 w-full resize-none rounded-xl border bg-white px-3 py-2 text-xs outline-none focus:border-blue-400 dark:bg-zinc-900"
             />
+            </>
+            )}
             </div>
           </section>
 
@@ -317,7 +343,7 @@ export default function LowStockAlertModal({
           )}
         </div>
 
-        <footer className="flex flex-col gap-2 border-t p-3 sm:flex-row sm:justify-end sm:px-5">
+        <footer className="flex flex-col gap-2 border-t px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:flex-row sm:justify-end sm:px-5 sm:pb-3">
           <button
             type="button"
             onClick={onClose}
@@ -454,15 +480,21 @@ function AlertGroup({
 }) {
   const styles =
     tone === "red"
-      ? "border-red-100 bg-red-50/60 text-red-700 dark:border-red-900 dark:bg-red-950/20"
-      : "border-amber-100 bg-amber-50/60 text-amber-700 dark:border-amber-900 dark:bg-amber-950/20";
+      ? "border-red-100 border-l-red-500 dark:border-red-900 dark:border-l-red-500"
+      : "border-amber-100 border-l-amber-500 dark:border-amber-900 dark:border-l-amber-500";
 
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <PackageX size={15} className={tone === "red" ? "text-red-600" : "text-amber-600"} />
-        <h3 className="text-xs font-bold">{title}</h3>
-        <span className="text-[10px] text-zinc-400">({rows.length} item)</span>
+        <span className={`flex size-7 items-center justify-center rounded-lg ${
+          tone === "red" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"
+        }`}>
+          <PackageX size={14} />
+        </span>
+        <div>
+          <h3 className="text-xs font-black">{title}</h3>
+          <p className="text-[9px] text-zinc-400">{rows.length} implant perlu diperiksa</p>
+        </div>
       </div>
       <div className="space-y-2">
         {rows.map((row) => {
@@ -474,45 +506,61 @@ function AlertGroup({
           return (
           <article
             key={stockRowKey(row)}
-            className={`rounded-xl border p-3 ${styles} ${
-              rowSelected ? "ring-2 ring-blue-500/40" : "opacity-60"
+            className={`rounded-2xl border border-l-4 bg-white p-3.5 shadow-sm dark:bg-zinc-900 ${styles} ${
+              rowSelected ? "" : "opacity-50"
             }`}
           >
             <div className="flex items-start justify-between gap-3">
-              <label className="flex shrink-0 cursor-pointer pt-0.5">
+              <label className="flex shrink-0 cursor-pointer pt-1">
                 <input
                   type="checkbox"
                   checked={rowSelected}
                   disabled={!brandSelected}
                   onChange={() => onToggle(row)}
-                  className="size-4 rounded border-zinc-300 accent-blue-600"
+                  className="size-5 rounded border-zinc-300 accent-blue-600"
                   aria-label={`Pilih ${row.NoStok || row.Deskripsi}`}
                 />
               </label>
-              <div className="min-w-0">
-                <p className="truncate text-xs font-bold">
-                  {row.NoStok || "Tanpa REF"} · {row.Brand || "Tanpa brand"}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className={`rounded-md px-2 py-1 text-[9px] font-black ${
+                    tone === "red"
+                      ? "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                      : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                  }`}>
+                    {tone === "red" ? "HABIS" : "MENIPIS"}
+                  </span>
+                  <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {row.Brand || "Tanpa brand"}
+                  </span>
+                  <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {row.Implant || "Tanpa kategori"}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs font-black text-zinc-900 dark:text-white">
+                  {row.NoStok || "Tanpa REF"}
                 </p>
                 <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-zinc-600 dark:text-zinc-300">
                   {row.Deskripsi}
                 </p>
                 <p className="mt-1 text-[10px] text-zinc-500">
-                  {row.Implant || "Tanpa kategori"} · LOT {row.Batch || "-"}
+                  LOT / Batch: <b>{row.Batch || "-"}</b>
                 </p>
-                {tone === "red" && (
-                  <p className="mt-2 rounded-lg bg-red-600 px-2 py-1.5 text-[10px] font-bold text-white">
-                    WARNING: Implant habis dan tidak tersedia lagi — segera refill.
-                  </p>
-                )}
-                {tone === "amber" && (
-                  <p className="mt-2 rounded-lg bg-amber-500 px-2 py-1.5 text-[10px] font-bold text-white">
-                    WARNING: Jika implant ini digunakan lagi, stok akan habis dan tidak tersedia.
-                  </p>
-                )}
+                <p className={`mt-2 text-[10px] font-semibold ${
+                  tone === "red" ? "text-red-600" : "text-amber-600"
+                }`}>
+                  {tone === "red"
+                    ? "Tidak tersedia — segera jadwalkan refill."
+                    : "Jika digunakan lagi, stok akan habis."}
+                </p>
               </div>
-              <div className="shrink-0 text-center">
+              <div className={`shrink-0 rounded-xl px-2.5 py-2 text-center ${
+                tone === "red"
+                  ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
+                  : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+              }`}>
                 <p className="text-xl font-black">{Number(row.TotalQty || 0)}</p>
-                <p className="text-[9px] font-semibold">tersisa</p>
+                <p className="text-[8px] font-bold uppercase">Sisa</p>
               </div>
             </div>
           </article>

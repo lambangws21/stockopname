@@ -12,12 +12,24 @@ export const STOCK_IMPLANT_CATEGORIES = [
   "BONE CEMENT",
   "CUP ACETABULUM",
   "LINER CUP",
+  "LINER BIPOLAR",
   "BONE SCREW",
   "STEM TKR",
 ] as const;
 
 export type StockImplantCategory =
   (typeof STOCK_IMPLANT_CATEGORIES)[number];
+
+export const STOCK_PROCEDURE_CATEGORIES = [
+  "TKR",
+  "THR",
+  "BIPOLAR",
+] as const satisfies readonly StockImplantCategory[];
+
+export const STOCK_COMPONENT_CATEGORIES = STOCK_IMPLANT_CATEGORIES.filter(
+  (category) =>
+    !(STOCK_PROCEDURE_CATEGORIES as readonly string[]).includes(category)
+);
 
 export const STOCK_IMPLANT_CATEGORY_LABELS: Record<
   StockImplantCategory,
@@ -36,6 +48,7 @@ export const STOCK_IMPLANT_CATEGORY_LABELS: Record<
   "BONE CEMENT": "Bone Cement",
   "CUP ACETABULUM": "Cup Acetabulum",
   "LINER CUP": "Liner Cup",
+  "LINER BIPOLAR": "Liner Bipolar",
   "BONE SCREW": "Bone Screw",
   "STEM TKR": "Stem TKR",
 };

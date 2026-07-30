@@ -7,8 +7,11 @@ import StockTablePremium from "@/components/StockTablePremium";
 import Scanner from "@/components/stock/Scanner";
 import {
   Boxes,
+  ClipboardSignature,
+  Hospital,
   QrCode,
   Target,
+  Warehouse,
   X,
 } from "lucide-react";
 
@@ -25,9 +28,9 @@ export function StockManagementPage() {
   const [scanResult, setScanResult] = useState<ScanPayload | null>(null);
 
   return (
-    <main className="min-h-screen bg-slate-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
-      <div className="mx-auto max-w-[1680px] space-y-4 px-3 py-3 sm:px-5 sm:py-5 lg:space-y-5">
-        <header className="flex flex-col gap-4 rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+    <main className="min-h-dvh bg-slate-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
+      <div className="mx-auto max-w-[1680px] space-y-0 px-0 py-0 sm:space-y-4 sm:px-5 sm:py-5 lg:space-y-5">
+        <header className="hidden flex-col gap-4 rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:flex sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div className="flex items-center gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-sm shadow-violet-200 dark:shadow-none">
               <Boxes size={22} />
@@ -52,6 +55,27 @@ export function StockManagementPage() {
               {scanOpen ? "Tutup Scan" : "Scan Barcode"}
             </button>
             <Link
+              href="/logistik"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <Warehouse size={15} />
+              Dashboard Logistik
+            </Link>
+            <Link
+              href="/serah-terima"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <ClipboardSignature size={15} />
+              Serah Terima
+            </Link>
+            <Link
+              href="/rumah-sakit"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              <Hospital size={15} />
+              Stock RS
+            </Link>
+            <Link
               href="/customer-mapping"
               className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-500"
             >
@@ -61,7 +85,7 @@ export function StockManagementPage() {
           </div>
         </header>
 
-        <section>
+        <section className={`${scanOpen ? "block" : "hidden sm:block"} p-3 sm:p-0`}>
           <div className="rounded-xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center gap-3">
               <span className="flex size-9 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-950/40">
@@ -73,6 +97,16 @@ export function StockManagementPage() {
                   Cari REF dan batch secara cepat
                 </p>
               </div>
+              {scanOpen && (
+                <button
+                  type="button"
+                  onClick={() => setScanOpen(false)}
+                  className="ml-auto inline-flex size-9 items-center justify-center rounded-lg border text-zinc-500 sm:hidden"
+                  aria-label="Tutup scanner"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
 
             {scanOpen && (
@@ -107,6 +141,10 @@ export function StockManagementPage() {
             sheet="Sheet1"
             externalScan={scanResult}
             title="Stock Management"
+            onOpenScanner={() => {
+              setScanOpen(true);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
           />
         </Suspense>
       </div>

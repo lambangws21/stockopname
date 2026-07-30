@@ -1,0 +1,1985 @@
+"use client";
+
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import {
+  ArrowLeft,
+  CalendarClock,
+  ClipboardSignature,
+  Copy,
+  Eraser,
+  ExternalLink,
+  Hospital,
+  LoaderCircle,
+  MessageCircle,
+  PackageCheck,
+  Plus,
+  Save,
+  Search,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import { gasGET } from "@/lib/gas";
+import {
+  listOnlineHandovers,
+  saveOnlineHandover,
+  settleOnlineHandover,
+} from "@/lib/handover";
+import type { StockRow } from "@/types/stock";
+import type {
+  HandoverInstrument,
+  HandoverItem,
+  HandoverProcedure,
+  OnlineHandover,
+} from "@/types/handover";
+
+const PROCEDURES: HandoverProcedure[] = ["TKR", "THR", "BIPOLAR"];
+const BRANDS = ["NORMMED", "ZIMMER"] as const;
+type HandoverBrand = (typeof BRANDS)[number];
+
+export default function OnlineHandoverPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-dvh items-center justify-center bg-slate-50">
+          <LoaderCircle className="animate-spin text-blue-600" />
+        </main>
+      }
+    >
+      <OnlineHandoverContent />
+    </Suspense>
+  );
+}
+
+function OnlineHandoverContent() {
+  const searchParams = useSearchParams();
+  const requestedId = searchParams.get("id") || "";
+  const [stock, setStock] = useState<StockRow[]>([]);
+  const [documents, setDocuments] = useState<OnlineHandover[]>([]);
+  const [form, setForm] = useState<OnlineHandover>(() => emptyHandover("TKR"));
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [itemSearch, setItemSearch] = useState("");
+  const [accessoryModalOpen, setAccessoryModalOpen] = useState(false);
+  const [accessorySearch, setAccessorySearch] = useState("");
+  const [accessoryBrandFilter, setAccessoryBrandFilter] = useState<
+    "ALL" | HandoverBrand
+  >("ALL");
+  const [accessorySelection, setAccessorySelection] = useState<string[]>([]);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [stockResult, requestedDocuments] = await Promise.all([
+        gasGET("Sheet1"),
+        requestedId
+          ? listOnlineHandovers(requestedId)
+          : Promise.resolve([] as OnlineHandover[]),
+      ]);
+      const stockRows = stockResult.data ?? [];
+      setStock(stockRows);
+      const requested = requestedDocuments[0];
+      if (requested) setForm(normalizeHandoverDocument(requested));
+      else setForm(buildHandoverFromStock("TKR", "NORMMED", stockRows));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Data gagal dimuat");
+    } finally {
+      setLoading(false);
+    }
+
+    // Riwayat dokumen bukan data utama form. Muat setelah katalog tampil agar
+    // halaman tidak menunggu respons Apps Script kedua.
+    void listOnlineHandovers()
+      .then(setDocuments)
+      .catch((error) =>
+        toast.error(
+          error instanceof Error ? error.message : "Riwayat gagal dimuat"
+        )
+      );
+  }, [requestedId]);
+
+  async function openSavedDocument(document: OnlineHandover) {
+    if (!document.ID) {
+      setForm(document);
+      return;
+    }
+    try {
+      const detail = await listOnlineHandovers(document.ID);
+      setForm(normalizeHandoverDocument(detail[0] || document));
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Detail dokumen gagal dibuka"
+      );
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const filteredItems = useMemo(() => {
+    const query = itemSearch.trim().toLowerCase();
+    return form.Items.map((item, index) => ({ item, index })).filter(
+      ({ item }) =>
+        !query ||
+        [item.partNumber, item.description, item.batch]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+    );
+  }, [form.Items, itemSearch]);
+
+  const selectedItems = form.Items.filter((item) => item.selected);
+  const issuedTotal = selectedItems.reduce(
+    (total, item) => total + Number(item.qtyIssued || 0),
+    0
+  );
+  const additionalStockItems = useMemo(() => {
+    const currentRows = new Set(
+      form.Items
+        .map((item) => Number(item.stockRow || 0))
+        .filter((row) => row > 0)
+    );
+    return stock.filter(
+      (row) => !currentRows.has(Number(row.No || 0))
+    );
+  }, [form.Items, stock]);
+  const filteredAdditionalStockItems = useMemo(() => {
+    const query = accessorySearch.trim().toLowerCase();
+    return additionalStockItems.filter((row) => {
+      if (
+        accessoryBrandFilter !== "ALL" &&
+        normalizeBrand(row.Brand) !== accessoryBrandFilter
+      ) {
+        return false;
+      }
+      return (
+        !query ||
+        [row.NoStok, row.Deskripsi, row.Batch, row.Implant, row.Brand]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      );
+    });
+  }, [accessoryBrandFilter, accessorySearch, additionalStockItems]);
+  const allAdditionalVisibleSelected =
+    filteredAdditionalStockItems.length > 0 &&
+    filteredAdditionalStockItems.every((row) =>
+      accessorySelection.includes(stockItemKey(row))
+    );
+
+  function toggleAdditionalItem(key: string) {
+    setAccessorySelection((current) =>
+      current.includes(key)
+        ? current.filter((selectedKey) => selectedKey !== key)
+        : [...current, key]
+    );
+  }
+
+  function toggleAllAdditionalVisible(checked: boolean) {
+    const visibleKeys = filteredAdditionalStockItems.map(stockItemKey);
+    const visibleSet = new Set(visibleKeys);
+    setAccessorySelection((current) => {
+      const outsideVisible = current.filter((key) => !visibleSet.has(key));
+      return checked ? [...outsideVisible, ...visibleKeys] : outsideVisible;
+    });
+  }
+
+  function addSelectedStockItems() {
+    const selectedSet = new Set(accessorySelection);
+    const rows = additionalStockItems.filter((row) =>
+      selectedSet.has(stockItemKey(row))
+    );
+    if (rows.length === 0) return;
+    setForm((current) => ({
+      ...current,
+      Items: [
+        ...current.Items,
+        ...rows.map((row) => stockRowToHandoverItem(row)),
+      ],
+    }));
+    setAccessorySelection([]);
+    setAccessorySearch("");
+    setAccessoryModalOpen(false);
+    toast.success(`${rows.length} item ditambahkan ke checklist`);
+  }
+
+  function changeProcedure(procedure: HandoverProcedure) {
+    const brand = normalizeBrand(form.Brand);
+    const next = buildHandoverFromStock(procedure, brand, stock);
+    setForm({
+      ...next,
+      Hospital: form.Hospital,
+      Surgeon: form.Surgeon,
+      ApprovedBy: form.ApprovedBy,
+      HandoverDate: form.HandoverDate,
+      Sender: form.Sender,
+      Checker1: form.Checker1,
+      Checker2: form.Checker2,
+      AcknowledgedBy: form.AcknowledgedBy,
+    });
+  }
+
+  function changeBrand(brand: HandoverBrand) {
+    const next = buildHandoverFromStock(form.Procedure, brand, stock);
+    setForm({
+      ...next,
+      Hospital: form.Hospital,
+      Surgeon: form.Surgeon,
+      ApprovedBy: form.ApprovedBy,
+      HandoverDate: form.HandoverDate,
+      Sender: form.Sender,
+      Checker1: form.Checker1,
+      Checker2: form.Checker2,
+      AcknowledgedBy: form.AcknowledgedBy,
+    });
+  }
+
+  async function persist(status: "DRAFT" | "DIKIRIM") {
+    if (status === "DIKIRIM" && (!form.Hospital || !form.Sender)) {
+      toast.error("Hospital dan nama pengirim wajib diisi");
+      return;
+    }
+    if (status === "DIKIRIM" && !form.SenderSignature) {
+      toast.error("Tanda tangan pengirim wajib diisi");
+      return;
+    }
+    setSaving(true);
+    const stableForm = {
+      ...form,
+      ID: form.ID || `ST-${crypto.randomUUID()}`,
+      Status: status,
+    } as OnlineHandover;
+    // ID disimpan sebelum request agar retry manual tidak menggandakan
+    // pengurangan stok bila respons pertama terlambat.
+    setForm(stableForm);
+    try {
+      const result = await saveOnlineHandover(stableForm);
+      if (result.data) setForm(normalizeHandoverDocument(result.data));
+      toast.success(
+        status === "DIKIRIM"
+          ? "Dokumen dikirim untuk diterima"
+          : "Draft berhasil disimpan"
+      );
+      if (status === "DIKIRIM") {
+        setShareModalOpen(true);
+        void Promise.all([gasGET("Sheet1"), listOnlineHandovers()])
+          .then(([latestStock, updated]) => {
+            setStock(latestStock.data ?? []);
+            setDocuments(updated);
+          })
+          .catch(() => {
+            // Pengiriman sudah berhasil; kegagalan refresh tidak boleh
+            // mengubahnya menjadi pesan gagal simpan.
+          });
+      } else {
+        void listOnlineHandovers().then(setDocuments).catch(() => undefined);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menyimpan");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function accept() {
+    if (!form.Receiver.trim()) {
+      toast.error("Nama penerima wajib diisi");
+      return;
+    }
+    if (!form.ReceiverSignature) {
+      toast.error("Tanda tangan penerima wajib diisi");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await saveOnlineHandover(
+        { ...form, Status: "DITERIMA" },
+        true
+      );
+      if (result.data) setForm(normalizeHandoverDocument(result.data));
+      toast.success("Serah terima berhasil diterima");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menerima");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveHospitalUsage() {
+    if (!form.ID) return;
+    setSaving(true);
+    try {
+      const result = await settleOnlineHandover({
+        ID: form.ID,
+        Items: form.Items,
+        by: form.Receiver || "Rumah Sakit",
+      });
+      if (result.data) setForm(normalizeHandoverDocument(result.data));
+      toast.success("Pemakaian dan pengembalian implant berhasil disimpan");
+      const latestStock = await gasGET("Sheet1");
+      setStock(latestStock.data ?? []);
+      const updated = await listOnlineHandovers();
+      setDocuments(updated);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Pergerakan implant gagal disimpan"
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const sharePath = form.ID ? `/serah-terima?id=${form.ID}` : "";
+
+  function getShareUrl() {
+    return `${window.location.origin}/serah-terima?id=${form.ID}`;
+  }
+
+  function getWhatsAppMessage() {
+    const implantCount = form.Items.filter(
+      (item) => item.selected && Number(item.qtyIssued || 0) > 0
+    ).length;
+    const instrumentCount = form.Instruments.filter(
+      (item) => item.selected
+    ).length;
+    return [
+      "Informasi pengiriman implant & instrument",
+      "",
+      `Logistik: ${form.Sender || "-"}`,
+      `Rumah Sakit: ${form.Hospital || "-"}`,
+      `Tindakan: ${form.Procedure}`,
+      `Brand: ${normalizeBrand(form.Brand)}`,
+      `Implant: ${implantCount} item`,
+      `Instrument: ${instrumentCount} item`,
+      "",
+      "Implant dan instrument telah dikirim oleh tim logistik.",
+      "Silakan buka link berikut untuk melihat detail dan melakukan penerimaan:",
+      getShareUrl(),
+    ].join("\n");
+  }
+
+  async function copyShareLink() {
+    try {
+      await navigator.clipboard.writeText(getShareUrl());
+      toast.success("Link serah-terima berhasil disalin");
+    } catch {
+      toast.error("Link gagal disalin");
+    }
+  }
+
+  function shareToWhatsApp() {
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(getWhatsAppMessage())}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+  return (
+    <main className="min-h-dvh bg-slate-50 pb-10 text-zinc-950 dark:bg-zinc-950 dark:text-white">
+      <header className="bg-[#0f172a] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-6">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex items-center justify-between">
+            <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+              <ArrowLeft size={15} /> Kembali ke stok
+            </Link>
+            <Link
+              href="/rumah-sakit"
+              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-[10px] font-bold"
+            >
+              Stock RS
+            </Link>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <span className="flex size-11 items-center justify-center rounded-xl bg-white/10">
+              <ClipboardSignature size={21} />
+            </span>
+            <div>
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">Dokumen digital</p>
+              <h1 className="text-xl font-black">Serah Terima Online</h1>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {loading ? (
+        <div className="flex justify-center py-20"><LoaderCircle className="animate-spin text-blue-600" /></div>
+      ) : (
+        <div className="mx-auto grid max-w-7xl gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[1fr_280px]">
+          <div className="space-y-4">
+            <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
+              <div className="grid grid-cols-3 gap-2">
+                {PROCEDURES.map((procedure) => (
+                  <button
+                    key={procedure}
+                    type="button"
+                    disabled={Boolean(form.ID)}
+                    onClick={() => changeProcedure(procedure)}
+                    className={`rounded-xl border px-3 py-3 text-xs font-black ${
+                      form.Procedure === procedure
+                        ? "border-blue-600 bg-blue-600 text-white"
+                        : "bg-slate-50 dark:bg-zinc-800"
+                    }`}
+                  >
+                    {procedure}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3">
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
+                  Brand implant
+                </p>
+                <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
+                  {BRANDS.map((brand) => (
+                    <button
+                      key={brand}
+                      type="button"
+                      disabled={Boolean(form.ID)}
+                      onClick={() => changeBrand(brand)}
+                      className={`h-10 rounded-lg text-xs font-black transition ${
+                        normalizeBrand(form.Brand) === brand
+                          ? brand === "NORMMED"
+                            ? "bg-emerald-600 text-white shadow-sm"
+                            : "bg-violet-600 text-white shadow-sm"
+                          : "text-zinc-500"
+                      }`}
+                    >
+                      {brand === "NORMMED" ? "Normmed" : "Zimmer"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <TextField label="Hospital" value={form.Hospital} onChange={(Hospital) => setForm({ ...form, Hospital })} />
+                <TextField label="Surgeon / Dokter" value={form.Surgeon} onChange={(Surgeon) => setForm({ ...form, Surgeon })} />
+                <TextField label="Approved by" value={form.ApprovedBy} onChange={(ApprovedBy) => setForm({ ...form, ApprovedBy })} />
+                <TextField label="Tanggal" type="date" value={form.HandoverDate} onChange={(HandoverDate) => setForm({ ...form, HandoverDate })} />
+                <TextField label="Set / Box" value={form.SetName} onChange={(SetName) => setForm({ ...form, SetName })} />
+                <div className="rounded-xl border bg-slate-50 px-3 py-2 dark:bg-zinc-800">
+                  <p className="text-[10px] font-bold text-zinc-500">Kelompok data</p>
+                  <p className="mt-1 text-sm font-black">
+                    {form.Procedure} · {normalizeBrand(form.Brand)}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+              <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                <div>
+                  <h2 className="text-sm font-black">Checklist Implant {form.Procedure}</h2>
+                  <p className="text-[10px] text-zinc-500">{selectedItems.length} dipilih · {issuedTotal} pcs dikeluarkan</p>
+                </div>
+                <div className="grid w-full grid-cols-[auto_auto_1fr] gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        Items: form.Items.map((item) =>
+                          toggleHandoverItem(item, true)
+                        ),
+                      })
+                    }
+                    className="h-11 rounded-xl border px-2 text-[9px] font-bold"
+                  >
+                    Pilih semua
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm({
+                        ...form,
+                        Items: form.Items.map((item) =>
+                          toggleHandoverItem(item, false)
+                        ),
+                      })
+                    }
+                    className="h-11 rounded-xl border px-2 text-[9px] font-bold text-red-600"
+                  >
+                    Kosongkan
+                  </button>
+                  <label className="relative min-w-0 sm:w-64">
+                    <Search className="absolute left-3 top-3.5 text-zinc-400" size={14} />
+                    <input value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} placeholder="Cari REF..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-2 text-xs" />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={Boolean(form.ID)}
+                    onClick={() => setAccessoryModalOpen(true)}
+                    className="col-span-3 inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border bg-white px-3 text-[10px] font-bold text-blue-700 disabled:opacity-40 sm:col-span-1 dark:bg-zinc-900"
+                  >
+                    <Plus size={14} /> Tambah aksesori
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 p-2 sm:hidden">
+                {filteredItems.map(({ item, index }) => (
+                  <HandoverItemCard
+                    key={`${item.partNumber}-${item.batch}-${index}`}
+                    item={item}
+                    onChange={(next) => updateItem(setForm, index, next)}
+                  />
+                ))}
+                {filteredItems.length === 0 && (
+                  <div className="rounded-xl border border-dashed p-8 text-center text-xs text-zinc-500">
+                    Implant tidak ditemukan.
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-[920px] text-left text-xs">
+                  <thead className="bg-slate-100 text-[9px] uppercase text-zinc-500 dark:bg-zinc-800">
+                    <tr>
+                      <th className="px-3 py-3">Pilih</th><th className="px-3 py-3">Part Number</th><th className="px-3 py-3">Description</th><th className="px-3 py-3">Batch</th><th className="px-3 py-3">Kebutuhan RS</th><th className="px-3 py-3">Stok Office</th><th className="px-3 py-3">Dikirim</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredItems.map(({ item, index }) => (
+                      <HandoverItemRow key={`${item.partNumber}-${item.batch}-${index}`} item={item} onChange={(next) => updateItem(setForm, index, next)} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            {form.InventoryPostedAt && (
+              <HospitalInventorySection
+                items={form.Items}
+                hospital={form.Hospital}
+                editable={form.Status === "DITERIMA"}
+                saving={saving}
+                onChange={(Items) => setForm({ ...form, Items })}
+                onSave={() => void saveHospitalUsage()}
+              />
+            )}
+
+            <InstrumentSection
+              instruments={form.Instruments}
+              disabled={form.Status === "DITERIMA"}
+              onChange={(Instruments) => setForm({ ...form, Instruments })}
+            />
+
+            <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
+              <h2 className="text-sm font-black">Pihak Serah Terima</h2>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <TextField label="Pengirim" value={form.Sender} onChange={(Sender) => setForm({ ...form, Sender })} />
+                <TextField label="Checker I" value={form.Checker1} onChange={(Checker1) => setForm({ ...form, Checker1 })} />
+                <TextField label="Checker II" value={form.Checker2} onChange={(Checker2) => setForm({ ...form, Checker2 })} />
+                <TextField label="Mengetahui" value={form.AcknowledgedBy} onChange={(AcknowledgedBy) => setForm({ ...form, AcknowledgedBy })} />
+                <TextField label="Penerima" value={form.Receiver} onChange={(Receiver) => setForm({ ...form, Receiver })} />
+                <TextField label="Catatan penerimaan" value={form.AcceptanceNote} onChange={(AcceptanceNote) => setForm({ ...form, AcceptanceNote })} />
+              </div>
+              <div className="mt-4 grid gap-3 border-t pt-4 lg:grid-cols-2">
+                <SignaturePad
+                  label="Tanda tangan pengirim"
+                  name={form.Sender || "Pengirim"}
+                  value={form.SenderSignature || ""}
+                  disabled={form.Status === "DITERIMA"}
+                  onChange={(SenderSignature) =>
+                    setForm({ ...form, SenderSignature })
+                  }
+                />
+                <SignaturePad
+                  label="Tanda tangan penerima"
+                  name={form.Receiver || "Penerima"}
+                  value={form.ReceiverSignature || ""}
+                  disabled={form.Status === "DITERIMA"}
+                  onChange={(ReceiverSignature) =>
+                    setForm({ ...form, ReceiverSignature })
+                  }
+                />
+              </div>
+            </section>
+
+            <div className="sticky bottom-0 z-30 -mx-3 grid grid-cols-3 gap-1.5 border-t bg-slate-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur dark:bg-zinc-950/95 sm:static sm:mx-0 sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+              <button disabled={saving || form.Status === "DITERIMA"} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
+              <button disabled={saving || form.Status === "DITERIMA"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">Kirim ke penerima</span></button>
+              <button disabled={saving || form.Status !== "DIKIRIM"} onClick={() => void accept()} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><PackageCheck size={15} /> <span className="sm:hidden">Terima</span><span className="hidden sm:inline">Terima & setujui</span></button>
+            </div>
+
+            {sharePath && form.Status !== "DRAFT" && (
+              <button type="button" onClick={() => setShareModalOpen(true)} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-bold text-white"><MessageCircle size={16} /> Buka link & bagikan ke WhatsApp</button>
+            )}
+          </div>
+
+          <aside className="h-fit rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 xl:sticky xl:top-4">
+            <div className="flex items-center justify-between px-1">
+              <div>
+                <h2 className="text-sm font-black">Dokumen Terbaru</h2>
+                <p className="mt-0.5 text-[9px] text-zinc-400">
+                  {documents.length} dokumen tersimpan
+                </p>
+              </div>
+              <button type="button" onClick={() => setForm(buildHandoverFromStock("TKR", "NORMMED", stock))} className="text-[10px] font-bold text-blue-600">Dokumen baru</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {documents.slice(0, 10).map((document, index) => (
+                <DocumentSummaryCard
+                  key={document.ID || `draft-${index}`}
+                  document={document}
+                  active={form.ID === document.ID}
+                  onClick={() => void openSavedDocument(document)}
+                />
+              ))}
+              {documents.length === 0 && (
+                <p className="rounded-xl border border-dashed p-5 text-center text-[10px] text-zinc-500">
+                  Belum ada dokumen tersimpan.
+                </p>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {accessoryModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Tambah aksesori"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setAccessoryModalOpen(false);
+            }
+          }}
+        >
+          <section className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-2xl">
+            <header className="flex items-center justify-between border-b p-4">
+              <div>
+                <h2 className="text-sm font-black">
+                  Tambah Aksesori / Item Lainnya
+                </h2>
+                <p className="mt-0.5 text-[10px] text-zinc-500">
+                  Semua brand · pilih beberapa item sekaligus
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccessoryModalOpen(false)}
+                className="flex size-10 items-center justify-center rounded-xl border"
+                aria-label="Tutup modal"
+              >
+                <X size={18} />
+              </button>
+            </header>
+
+            <div className="space-y-3 border-b p-3 sm:p-4">
+              <label className="relative block">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-3.5 text-zinc-400"
+                />
+                <input
+                  autoFocus
+                  value={accessorySearch}
+                  onChange={(event) => setAccessorySearch(event.target.value)}
+                  placeholder="Cari REF, LOT, kategori, atau nama item..."
+                  className="h-11 w-full rounded-xl border bg-transparent pl-10 pr-3 text-sm"
+                />
+              </label>
+              <div className="grid grid-cols-3 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
+                {(["ALL", "NORMMED", "ZIMMER"] as const).map((brand) => (
+                  <button
+                    key={brand}
+                    type="button"
+                    onClick={() => setAccessoryBrandFilter(brand)}
+                    className={`h-9 rounded-lg text-[10px] font-black ${
+                      accessoryBrandFilter === brand
+                        ? "bg-white text-blue-700 shadow-sm dark:bg-zinc-900"
+                        : "text-zinc-500"
+                    }`}
+                  >
+                    {brand === "ALL" ? "Semua Brand" : brand}
+                  </button>
+                ))}
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 text-[10px] font-black dark:bg-zinc-800">
+                <input
+                  type="checkbox"
+                  checked={allAdditionalVisibleSelected}
+                  onChange={(event) =>
+                    toggleAllAdditionalVisible(event.target.checked)
+                  }
+                  className="size-5 accent-blue-600"
+                />
+                Pilih semua hasil ({filteredAdditionalStockItems.length})
+              </label>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 sm:p-4">
+              {filteredAdditionalStockItems.map((row) => {
+                const key = stockItemKey(row);
+                const selected = accessorySelection.includes(key);
+                return (
+                  <label
+                    key={key}
+                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                      selected
+                        ? "border-blue-400 bg-blue-50 dark:bg-blue-950/20"
+                        : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleAdditionalItem(key)}
+                      className="mt-1 size-5 shrink-0 accent-blue-600"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap gap-1">
+                        <b className="rounded-md bg-slate-100 px-2 py-1 text-[9px] dark:bg-zinc-800">
+                          {row.NoStok}
+                        </b>
+                        <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">
+                          LOT {row.Batch || "-"}
+                        </span>
+                        <span className="rounded-md bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700">
+                          Stok {Number(row.Qty || 0)}
+                        </span>
+                        <span
+                          className={`rounded-md px-2 py-1 text-[9px] font-black ${
+                            normalizeBrand(row.Brand) === "ZIMMER"
+                              ? "bg-violet-50 text-violet-700"
+                              : "bg-emerald-50 text-emerald-700"
+                          }`}
+                        >
+                          {normalizeBrand(row.Brand)}
+                        </span>
+                      </span>
+                      <b className="mt-2 block text-xs">{row.Deskripsi}</b>
+                      <span className="mt-1 block text-[9px] text-zinc-500">
+                        {row.Implant || "Kategori belum diisi"}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+              {filteredAdditionalStockItems.length === 0 && (
+                <div className="rounded-xl border border-dashed p-10 text-center text-xs text-zinc-500">
+                  Tidak ada item tambahan yang ditemukan.
+                </div>
+              )}
+            </div>
+
+            <footer className="flex items-center gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-zinc-900 sm:p-4">
+              <span className="min-w-24 text-center text-xs font-black text-blue-600">
+                {accessorySelection.length} dipilih
+              </span>
+              <button
+                type="button"
+                disabled={accessorySelection.length === 0}
+                onClick={addSelectedStockItems}
+                className="h-12 flex-1 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-40"
+              >
+                Tambahkan ke Checklist
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {shareModalOpen && form.ID && (
+        <div
+          className="fixed inset-0 z-[110] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Bagikan serah terima"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShareModalOpen(false);
+          }}
+        >
+          <section className="w-full max-w-lg overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-2xl">
+            <header className="flex items-start justify-between bg-[#0f172a] p-4 text-white">
+              <div className="flex gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500">
+                  <Send size={18} />
+                </span>
+                <div>
+                  <h2 className="text-sm font-black">Pengiriman Berhasil</h2>
+                  <p className="mt-1 text-[10px] text-slate-300">
+                    Link siap dikirim kepada penerima.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(false)}
+                className="flex size-9 items-center justify-center rounded-xl border border-white/15 bg-white/10"
+                aria-label="Tutup modal"
+              >
+                <X size={17} />
+              </button>
+            </header>
+
+            <div className="space-y-3 p-4">
+              <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 text-[10px] dark:bg-zinc-800">
+                <ShareInfo label="Rumah Sakit" value={form.Hospital || "-"} />
+                <ShareInfo label="Tindakan" value={form.Procedure} />
+                <ShareInfo
+                  label="Brand"
+                  value={normalizeBrand(form.Brand)}
+                />
+                <ShareInfo label="Dikirim oleh" value={form.Sender || "-"} />
+              </div>
+
+              <div>
+                <p className="mb-1.5 text-[10px] font-black uppercase text-zinc-500">
+                  Link serah-terima
+                </p>
+                <div className="flex items-center gap-2 rounded-xl border bg-slate-50 p-2 dark:bg-zinc-800">
+                  <span className="min-w-0 flex-1 truncate px-1 text-[10px] text-zinc-600 dark:text-zinc-300">
+                    {getShareUrl()}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void copyShareLink()}
+                    className="flex h-9 shrink-0 items-center gap-1 rounded-lg border bg-white px-2 text-[9px] font-black dark:bg-zinc-900"
+                  >
+                    <Copy size={13} /> Salin
+                  </button>
+                </div>
+              </div>
+
+              <p className="rounded-xl bg-blue-50 p-3 text-[10px] leading-4 text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+                Saat link dibuka, penerima langsung melihat dokumen,
+                daftar implant, instrument yang dikirim, dan area tanda tangan
+                penerimaan.
+              </p>
+            </div>
+
+            <footer className="grid grid-cols-2 gap-2 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(getShareUrl(), "_blank", "noopener,noreferrer")
+                }
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border text-xs font-black"
+              >
+                <ExternalLink size={16} /> Buka Link
+              </button>
+              <button
+                type="button"
+                onClick={shareToWhatsApp}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-black text-white"
+              >
+                <MessageCircle size={16} /> Kirim WhatsApp
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+    </main>
+  );
+}
+
+function TextField({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+  const inputValue = type === "date" ? normalizeDateInput(value) : value || "";
+  return <label className="text-[10px] font-bold text-zinc-500">{label}<input type={type} value={inputValue} onChange={(event) => onChange(event.target.value)} className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm font-medium text-zinc-900 dark:text-white" /></label>;
+}
+
+function ShareInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="block text-[8px] font-bold uppercase text-zinc-400">
+        {label}
+      </span>
+      <b className="mt-1 block truncate text-[10px]">{value}</b>
+    </div>
+  );
+}
+
+function normalizeHandoverDocument(document: OnlineHandover): OnlineHandover {
+  return {
+    ...document,
+    HandoverDate: normalizeDateInput(document.HandoverDate),
+  };
+}
+
+function normalizeDateInput(value: string | undefined) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : "";
+}
+
+function HandoverItemRow({ item, onChange }: { item: HandoverItem; onChange: (item: HandoverItem) => void }) {
+  return <tr className={`border-t ${item.qtyChecked <= 0 ? "bg-red-50 text-red-800 dark:bg-red-950/20 dark:text-red-200" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={item.qtyChecked <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{item.qtyChecked <= 0 && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">STOK HABIS</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || item.qtyChecked <= 0} value={item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && item.qtyChecked === 0 ? "border-red-400 bg-red-100 text-red-700 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
+}
+
+function HandoverItemCard({
+  item,
+  onChange,
+}: {
+  item: HandoverItem;
+  onChange: (item: HandoverItem) => void;
+}) {
+  const fields = [
+    ["stdQty", "Kebutuhan"],
+    ["qtyChecked", "Stok Office"],
+    ["qtyIssued", "Dikirim"],
+  ] as const;
+
+  return (
+    <article
+      className={`overflow-hidden rounded-xl border ${
+        item.qtyChecked <= 0
+          ? "border-red-400 bg-red-50 shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none"
+          : item.selected
+          ? "border-blue-200 bg-white dark:border-blue-900 dark:bg-zinc-900"
+          : "bg-slate-50 opacity-55 dark:bg-zinc-900"
+      }`}
+    >
+      <div className="flex items-start gap-3 p-3">
+        <input
+          type="checkbox"
+          checked={item.selected}
+          disabled={item.qtyChecked <= 0}
+          onChange={(event) =>
+            onChange(toggleHandoverItem(item, event.target.checked))
+          }
+          className="mt-0.5 size-5 shrink-0 accent-blue-600"
+          aria-label={`Pilih ${item.partNumber}`}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+              {item.partNumber || "Tanpa REF"}
+            </span>
+            <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+              LOT {item.batch || "-"}
+            </span>
+            <span
+              className={`rounded-md px-2 py-1 text-[9px] font-black ${
+                item.qtyChecked <= 0
+                  ? "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                  : item.qtyChecked < item.stdQty
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-emerald-50 text-emerald-700"
+              }`}
+            >
+              {item.qtyChecked <= 0
+                ? "STOK HABIS · 0"
+                : item.qtyChecked < item.stdQty
+                  ? `STOK ${item.qtyChecked} · KURANG`
+                  : `STOK ${item.qtyChecked}`}
+            </span>
+          </div>
+          <p className="mt-2 text-xs font-bold leading-4">
+            {item.description || "Tanpa deskripsi"}
+          </p>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-px border-t bg-slate-200 dark:bg-zinc-800">
+        {fields.map(([field, label]) => (
+          <label
+            key={field}
+            className="bg-slate-50 px-1.5 py-2 text-center dark:bg-zinc-900"
+          >
+            <span className="block text-[8px] font-bold uppercase text-zinc-500">
+              {label}
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={
+                field === "qtyIssued"
+                  ? Math.min(item.qtyChecked, item.stdQty)
+                  : undefined
+              }
+              disabled={field !== "qtyIssued" || !item.selected}
+              value={item[field]}
+              onChange={(event) =>
+                onChange(
+                  changeItemQuantity(
+                    item,
+                    field,
+                    Number(event.target.value) || 0
+                  )
+                )
+              }
+              className={`mt-1 h-9 w-full rounded-lg border bg-white px-1 text-center text-sm font-black disabled:bg-slate-100 disabled:text-zinc-500 dark:bg-zinc-950 dark:disabled:bg-zinc-800 ${
+                field === "qtyChecked" && item.qtyChecked === 0
+                  ? "border-red-300 text-red-600"
+                  : ""
+              }`}
+            />
+          </label>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function changeItemQuantity(
+  item: HandoverItem,
+  field: "stdQty" | "qtyChecked" | "qtyIssued" | "qtyReturned",
+  rawValue: number
+) {
+  const value = Math.max(0, rawValue);
+  if (field === "qtyChecked") {
+    return {
+      ...item,
+      qtyChecked: value,
+      qtyIssued: Math.min(item.qtyIssued, value),
+    };
+  }
+  if (field === "qtyIssued") {
+    return {
+      ...item,
+      qtyIssued: Math.min(value, item.qtyChecked, item.stdQty),
+    };
+  }
+  return { ...item, [field]: value };
+}
+
+function toggleHandoverItem(item: HandoverItem, selected: boolean) {
+  if (item.qtyChecked <= 0) {
+    return { ...item, selected: false, qtyIssued: 0 };
+  }
+  return {
+    ...item,
+    selected,
+    qtyIssued: selected
+      ? Math.min(item.stdQty, item.qtyChecked)
+      : 0,
+  };
+}
+
+function InstrumentSection({
+  instruments,
+  disabled,
+  onChange,
+}: {
+  instruments: HandoverInstrument[];
+  disabled?: boolean;
+  onChange: (items: HandoverInstrument[]) => void;
+}) {
+  function update(index: number, patch: Partial<HandoverInstrument>) {
+    onChange(
+      instruments.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, ...patch } : item
+      )
+    );
+  }
+
+  function addItem() {
+    onChange([
+      ...instruments,
+      {
+        selected: true,
+        code: "",
+        name: "",
+        qty: 1,
+        unit: "PC",
+        condition: "BAIK",
+        note: "",
+      },
+    ]);
+  }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+      <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-black">Tanda Terima Instrument</h2>
+          <p className="text-[10px] text-zinc-500">
+            {instruments.length} item · kode, jumlah, kondisi, dan
+            keterangan dapat disesuaikan.
+          </p>
+        </div>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={addItem}
+            className="inline-flex h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white sm:w-auto"
+          >
+            <Plus size={15} /> Tambah item
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-3 p-3">
+        {instruments.map((item, index) => (
+          <article
+            key={`instrument-${index}`}
+            className={`rounded-xl border p-3 sm:p-4 ${
+              item.selected
+                ? "bg-blue-50/40 dark:bg-blue-950/10"
+                : "opacity-55"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                checked={item.selected}
+                disabled={disabled}
+                onChange={(event) =>
+                  update(index, { selected: event.target.checked })
+                }
+                className="size-5 accent-blue-600"
+                aria-label={`Pilih instrument ${index + 1}`}
+              />
+              <p className="flex-1 text-xs font-black">
+                Item instrument {index + 1}
+              </p>
+              {!disabled && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange(
+                      instruments.filter(
+                        (_value, itemIndex) => itemIndex !== index
+                      )
+                    )
+                  }
+                  className="inline-flex size-9 items-center justify-center rounded-lg border bg-white text-red-600"
+                  aria-label={`Hapus instrument ${index + 1}`}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <InstrumentField
+                label="Nama instrument"
+                value={item.name}
+                disabled={disabled}
+                wrapperClassName="col-span-2 lg:col-span-2"
+                onChange={(name) => update(index, { name })}
+              />
+              <InstrumentField
+                label="Kode barang"
+                value={item.code}
+                disabled={disabled}
+                onChange={(code) => update(index, { code })}
+              />
+              <label className="text-[10px] font-bold text-zinc-500">
+                Jumlah
+                <div className="mt-1 grid grid-cols-[1fr_88px] gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={item.qty}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      update(index, {
+                        qty: Math.max(0, Number(event.target.value) || 0),
+                      })
+                    }
+                    className="h-11 min-w-0 rounded-xl border bg-transparent px-3 text-sm font-bold"
+                  />
+                  <select
+                    value={item.unit}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      update(index, { unit: event.target.value })
+                    }
+                    className="h-11 rounded-xl border bg-white px-2 text-xs dark:bg-zinc-900"
+                  >
+                    <option>PC</option>
+                    <option>SET</option>
+                    <option>TRAY</option>
+                    <option>BOX</option>
+                    <option>UNIT</option>
+                  </select>
+                </div>
+              </label>
+              <InstrumentField
+                label="Kondisi"
+                value={item.condition}
+                disabled={disabled}
+                wrapperClassName="col-span-2 sm:col-span-1"
+                onChange={(condition) => update(index, { condition })}
+              />
+              <div className="col-span-2 sm:col-span-1 lg:col-span-3">
+                <InstrumentField
+                  label="Keterangan tambahan"
+                  value={item.note || ""}
+                  disabled={disabled}
+                  placeholder="Contoh: lengkap, steril, kabel disertakan..."
+                  onChange={(note) => update(index, { note })}
+                />
+              </div>
+            </div>
+          </article>
+        ))}
+
+        {instruments.length === 0 && (
+          <div className="rounded-xl border border-dashed p-8 text-center text-xs text-zinc-500">
+            Belum ada instrument. Tekan “Tambah item” untuk membuat data baru.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HospitalInventorySection({
+  items,
+  hospital,
+  editable,
+  saving,
+  onChange,
+  onSave,
+}: {
+  items: HandoverItem[];
+  hospital: string;
+  editable: boolean;
+  saving: boolean;
+  onChange: (items: HandoverItem[]) => void;
+  onSave: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
+  const hospitalItems = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => Number(item.hospitalQty || 0) > 0);
+  const query = search.trim().toLowerCase();
+  const visibleHospitalItems = hospitalItems.filter(
+    ({ item }) =>
+      !query ||
+      [item.partNumber, item.description, item.batch]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+  );
+  const selectableVisibleIndexes = visibleHospitalItems
+    .filter(({ item }) => getHospitalRemaining(item) > 0)
+    .map(({ index }) => index);
+  const allVisibleSelected =
+    selectableVisibleIndexes.length > 0 &&
+    selectableVisibleIndexes.every((index) => selectedIndexes.includes(index));
+
+  function toggleSelected(index: number) {
+    setSelectedIndexes((current) =>
+      current.includes(index)
+        ? current.filter((itemIndex) => itemIndex !== index)
+        : [...current, index]
+    );
+  }
+
+  function toggleAllVisible(checked: boolean) {
+    const visibleSet = new Set(selectableVisibleIndexes);
+    setSelectedIndexes((current) => {
+      const outsideVisible = current.filter((index) => !visibleSet.has(index));
+      return checked
+        ? [...outsideVisible, ...selectableVisibleIndexes]
+        : outsideVisible;
+    });
+  }
+
+  function updateSelected(field: "usedQty" | "returnedQty") {
+    const selectedSet = new Set(selectedIndexes);
+    onChange(
+      items.map((item, index) => {
+        if (!selectedSet.has(index)) return item;
+        const remaining = getHospitalRemaining(item);
+        if (remaining <= 0) return item;
+        return {
+          ...item,
+          [field]: Number(item[field] || 0) + remaining,
+        };
+      })
+    );
+    setSelectedIndexes([]);
+  }
+
+  function update(
+    index: number,
+    field: "usedQty" | "returnedQty",
+    rawValue: number
+  ) {
+    const current = items[index];
+    const hospitalQty = Math.max(0, Number(current.hospitalQty || 0));
+    const other =
+      field === "usedQty"
+        ? Number(current.returnedQty || 0)
+        : Number(current.usedQty || 0);
+    const value = Math.min(
+      Math.max(0, Number(rawValue || 0)),
+      Math.max(0, hospitalQty - other)
+    );
+    onChange(
+      items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item
+      )
+    );
+  }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-sm dark:border-blue-900 dark:bg-zinc-900">
+      <div className="bg-blue-50 p-4 dark:bg-blue-950/30">
+        <div className="flex items-start gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
+            <Hospital size={18} />
+          </span>
+          <div>
+            <h2 className="text-sm font-black">Stock di Rumah Sakit</h2>
+            <p className="mt-0.5 text-[10px] text-zinc-500">
+              {hospital || "Rumah sakit"} · tandai implant terpakai atau
+              dikembalikan setelah operasi.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2 p-2 sm:p-4">
+        <div className="sticky top-2 z-20 rounded-xl border bg-white/95 p-2 shadow-sm backdrop-blur dark:bg-zinc-900/95">
+          <label className="relative block">
+            <Search
+              size={16}
+              className="pointer-events-none absolute left-3 top-3.5 text-zinc-400"
+            />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Cari REF, LOT, atau nama implant di RS..."
+              className="h-11 w-full rounded-xl border bg-transparent pl-10 pr-3 text-sm"
+            />
+          </label>
+
+          {editable && (
+            <div className="mt-2 hidden items-center justify-between gap-3 md:flex">
+              <label className="flex cursor-pointer items-center gap-2 text-[10px] font-black">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={(event) => toggleAllVisible(event.target.checked)}
+                  className="size-5 accent-blue-600"
+                />
+                Pilih semua hasil ({selectableVisibleIndexes.length})
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-500">
+                  {selectedIndexes.length} item dipilih
+                </span>
+                <button
+                  type="button"
+                  disabled={selectedIndexes.length === 0}
+                  onClick={() => updateSelected("usedQty")}
+                  className="rounded-lg bg-red-600 px-3 py-2 text-[10px] font-black text-white disabled:opacity-40"
+                >
+                  Tandai Terpakai
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedIndexes.length === 0}
+                  onClick={() => updateSelected("returnedQty")}
+                  className="rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black text-white disabled:opacity-40"
+                >
+                  Return ke Office
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {visibleHospitalItems.map(({ item, index }) => {
+          const hospitalQty = Number(item.hospitalQty || 0);
+          const usedQty = Number(item.usedQty || 0);
+          const returnedQty = Number(item.returnedQty || 0);
+          const remaining = Math.max(
+            0,
+            hospitalQty - usedQty - returnedQty
+          );
+          return (
+            <article
+              key={`hospital-${item.partNumber}-${item.batch}-${index}`}
+              className={`rounded-xl border p-3 ${
+                selectedIndexes.includes(index)
+                  ? "border-blue-400 bg-blue-50/40 dark:bg-blue-950/10"
+                  : ""
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                {editable && remaining > 0 && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIndexes.includes(index)}
+                    onChange={() => toggleSelected(index)}
+                    aria-label={`Pilih ${item.partNumber}`}
+                    className="mt-1 hidden size-5 shrink-0 accent-blue-600 md:block"
+                  />
+                )}
+                <div className="min-w-0">
+                  <div className="flex flex-wrap gap-1">
+                    <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-black text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                      {item.partNumber}
+                    </span>
+                    <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">
+                      LOT {item.batch || "-"}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs font-bold leading-4">
+                    {item.description}
+                  </p>
+                  <p className="mt-1 text-[9px] font-semibold text-zinc-400">
+                    Office setelah kirim: {Number(item.officeAfter || 0)} pcs
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-lg px-2 py-1 text-[9px] font-black ${
+                    remaining > 0
+                      ? "bg-blue-50 text-blue-700"
+                      : "bg-zinc-100 text-zinc-600"
+                  }`}
+                >
+                  {remaining > 0 ? "DI RS" : "SELESAI"}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl bg-slate-50 p-1 dark:bg-zinc-800">
+                <HospitalMetric label="Dikirim" value={hospitalQty} />
+                <HospitalMetric label="Sisa RS" value={remaining} tone="blue" />
+                <HospitalMetric label="Terpakai" value={usedQty} tone="red" />
+                <HospitalMetric
+                  label="Kembali"
+                  value={returnedQty}
+                  tone="emerald"
+                />
+              </div>
+
+              {editable && remaining > 0 && (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      update(index, "usedQty", usedQty + remaining)
+                    }
+                    className="inline-flex h-11 items-center justify-center rounded-xl bg-red-50 px-2 text-[10px] font-black text-red-700"
+                  >
+                    Tandai Terpakai
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      update(index, "returnedQty", returnedQty + remaining)
+                    }
+                    className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-50 px-2 text-[10px] font-black text-emerald-700"
+                  >
+                    Return ke Office
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <label className="text-[10px] font-bold text-zinc-500">
+                  Dipakai operasi
+                  <input
+                    type="number"
+                    min={Number(item.usedQty || 0)}
+                    max={hospitalQty - returnedQty}
+                    value={usedQty}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      update(index, "usedQty", Number(event.target.value))
+                    }
+                    className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-center text-base font-black text-red-600 disabled:opacity-60"
+                  />
+                </label>
+                <label className="text-[10px] font-bold text-zinc-500">
+                  Kembali ke office
+                  <input
+                    type="number"
+                    min={Number(item.returnedQty || 0)}
+                    max={hospitalQty - usedQty}
+                    value={returnedQty}
+                    disabled={!editable}
+                    onChange={(event) =>
+                      update(index, "returnedQty", Number(event.target.value))
+                    }
+                    className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-center text-base font-black text-emerald-600 disabled:opacity-60"
+                  />
+                </label>
+              </div>
+            </article>
+          );
+        })}
+
+        {visibleHospitalItems.length === 0 && (
+          <div className="rounded-xl border border-dashed p-8 text-center text-xs text-zinc-500">
+            Implant tidak ditemukan.
+          </div>
+        )}
+      </div>
+
+      <div className="border-t p-3">
+        {editable ? (
+          <button
+            type="button"
+            disabled={saving || hospitalItems.length === 0}
+            onClick={onSave}
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-xs font-bold text-white disabled:opacity-50"
+          >
+            {saving ? (
+              <LoaderCircle size={16} className="animate-spin" />
+            ) : (
+              <Save size={16} />
+            )}
+            Simpan pemakaian & pengembalian
+          </button>
+        ) : (
+          <p className="rounded-xl bg-amber-50 px-3 py-3 text-center text-[10px] font-bold text-amber-700">
+            Penerima harus menekan “Terima & setujui” sebelum mencatat
+            pemakaian.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function HospitalMetric({
+  label,
+  value,
+  tone = "zinc",
+}: {
+  label: string;
+  value: number;
+  tone?: "zinc" | "blue" | "red" | "emerald";
+}) {
+  const colors = {
+    zinc: "text-zinc-800 dark:text-white",
+    blue: "text-blue-600",
+    red: "text-red-600",
+    emerald: "text-emerald-600",
+  };
+  return (
+    <div className="rounded-lg bg-white px-1 py-2 text-center dark:bg-zinc-900">
+      <b className={`block text-base ${colors[tone]}`}>{value}</b>
+      <span className="text-[8px] font-bold uppercase text-zinc-500">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function getHospitalRemaining(item: HandoverItem) {
+  return Math.max(
+    0,
+    Number(item.hospitalQty || 0) -
+      Number(item.usedQty || 0) -
+      Number(item.returnedQty || 0)
+  );
+}
+
+function InstrumentField({
+  label,
+  value,
+  disabled,
+  placeholder,
+  wrapperClassName,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  placeholder?: string;
+  wrapperClassName?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className={`text-[10px] font-bold text-zinc-500 ${wrapperClassName || ""}`}>
+      {label}
+      <input
+        value={value}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm font-medium text-zinc-900 disabled:opacity-70 dark:text-white"
+      />
+    </label>
+  );
+}
+
+function StatusBadge({ status }: { status: OnlineHandover["Status"] }) {
+  const style = status === "DITERIMA" ? "bg-emerald-50 text-emerald-700" : status === "DIKIRIM" ? "bg-blue-50 text-blue-700" : "bg-zinc-100 text-zinc-600";
+  return <span className={`rounded-full px-2 py-1 text-[8px] font-black ${style}`}>{status}</span>;
+}
+
+function DocumentSummaryCard({
+  document,
+  active,
+  onClick,
+}: {
+  document: OnlineHandover;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const selectedItems = document.Items.filter(
+    (item) => item.selected && Number(item.qtyIssued || 0) > 0
+  );
+  const sentQty = selectedItems.reduce(
+    (total, item) => total + Number(item.qtyIssued || 0),
+    0
+  );
+  const updatedAt = document.UpdatedAt || document.CreatedAt;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full overflow-hidden rounded-xl border text-left transition ${
+        active
+          ? "border-blue-300 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-950/20"
+          : "hover:bg-slate-50 dark:hover:bg-zinc-800"
+      }`}
+    >
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-[9px] font-black uppercase tracking-wide text-blue-600">
+              {document.ID || "DRAFT BELUM TERSIMPAN"}
+            </p>
+            <h3 className="mt-1 line-clamp-2 text-xs font-black leading-4">
+              {document.Hospital || "Rumah sakit belum diisi"}
+            </h3>
+          </div>
+          <StatusBadge status={document.Status} />
+        </div>
+
+        <div className="mt-2 flex flex-wrap gap-1">
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            {document.Procedure}
+          </span>
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            {document.Brand}
+          </span>
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+            {selectedItems.length} item · {sentQty} pcs
+          </span>
+        </div>
+
+        <div className="mt-3 space-y-1.5 border-t pt-2">
+          <div className="flex items-center justify-between gap-3 text-[9px]">
+            <span className="text-zinc-400">Tanggal tindakan</span>
+            <b>{formatDateOnly(document.HandoverDate)}</b>
+          </div>
+          <div className="flex items-center justify-between gap-3 text-[9px]">
+            <span className="inline-flex items-center gap-1 text-zinc-400">
+              <CalendarClock size={11} /> Diperbarui
+            </span>
+            <b>{formatDateTime(updatedAt)}</b>
+          </div>
+          {document.SentAt && (
+            <div className="flex items-center justify-between gap-3 text-[9px]">
+              <span className="text-zinc-400">Dikirim</span>
+              <b>{formatDateTime(document.SentAt)}</b>
+            </div>
+          )}
+          {document.AcceptedAt && (
+            <div className="flex items-center justify-between gap-3 text-[9px]">
+              <span className="text-zinc-400">Diterima</span>
+              <b className="text-emerald-600">
+                {formatDateTime(document.AcceptedAt)}
+              </b>
+            </div>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function formatDateOnly(value: string | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return raw;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function formatDateTime(value: string | undefined) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Makassar",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+    .format(date)
+    .replace(",", " ·");
+}
+
+function SignaturePad({
+  label,
+  name,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  name: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawingRef = useRef(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (!value) return;
+    const image = new Image();
+    image.onload = () => context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    image.src = value;
+  }, [value]);
+
+  function point(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    };
+  }
+
+  function start(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (disabled) return;
+    const context = event.currentTarget.getContext("2d");
+    if (!context) return;
+    drawingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const current = point(event);
+    context.beginPath();
+    context.moveTo(current.x, current.y);
+    context.lineWidth = 3;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle = "#0f172a";
+  }
+
+  function move(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current || disabled) return;
+    const context = event.currentTarget.getContext("2d");
+    if (!context) return;
+    const current = point(event);
+    context.lineTo(current.x, current.y);
+    context.stroke();
+  }
+
+  function finish(event: React.PointerEvent<HTMLCanvasElement>) {
+    if (!drawingRef.current || disabled) return;
+    drawingRef.current = false;
+    const canvas = event.currentTarget;
+    canvas.getContext("2d")?.closePath();
+    onChange(canvas.toDataURL("image/webp", 0.7));
+  }
+
+  function clear() {
+    if (disabled) return;
+    canvasRef.current
+      ?.getContext("2d")
+      ?.clearRect(0, 0, 640, 200);
+    onChange("");
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border bg-slate-50 dark:bg-zinc-800">
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <div>
+          <p className="text-[10px] font-black uppercase text-zinc-500">{label}</p>
+          <p className="text-xs font-bold">{name}</p>
+        </div>
+        {!disabled && (
+          <button type="button" onClick={clear} className="inline-flex h-8 items-center gap-1 rounded-lg border bg-white px-2 text-[10px] font-bold text-zinc-600">
+            <Eraser size={13} /> Hapus
+          </button>
+        )}
+      </div>
+      <canvas
+        ref={canvasRef}
+        width={640}
+        height={200}
+        onPointerDown={start}
+        onPointerMove={move}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+        className={`h-40 w-full bg-white touch-none ${disabled ? "cursor-default" : "cursor-crosshair"}`}
+        aria-label={label}
+      />
+      <p className="px-3 py-2 text-[9px] text-zinc-500">
+        {value ? "Tanda tangan tersimpan" : "Gunakan jari atau mouse pada area putih"}
+      </p>
+    </div>
+  );
+}
+
+function updateItem(setForm: React.Dispatch<React.SetStateAction<OnlineHandover>>, index: number, item: HandoverItem) {
+  setForm((current) => ({ ...current, Items: current.Items.map((value, itemIndex) => itemIndex === index ? item : value) }));
+}
+
+function emptyHandover(procedure: HandoverProcedure, brand: HandoverBrand = "NORMMED"): OnlineHandover {
+  return { Procedure: procedure, Brand: brand, Hospital: "", Surgeon: "", ApprovedBy: "", HandoverDate: new Date().toISOString().slice(0, 10), SetName: procedure === "TKR" ? "BOX – 1" : "", Items: [], Instruments: defaultInstruments(procedure, brand), Sender: "", Checker1: "", Checker2: "", AcknowledgedBy: "", Receiver: "", Status: "DRAFT", AcceptanceNote: "", SenderSignature: "", ReceiverSignature: "" };
+}
+
+function buildHandoverFromStock(procedure: HandoverProcedure, brand: HandoverBrand, rows: StockRow[]) {
+  const base = emptyHandover(procedure, brand);
+  base.Items = rows
+    .filter(
+      (row) =>
+        normalizeBrand(row.Brand) === brand && matchesProcedure(row, procedure)
+    )
+    .map(stockRowToHandoverItem);
+  return base;
+}
+
+function stockRowToHandoverItem(row: StockRow): HandoverItem {
+  const handoverQty = isBoneCement(row) ? 2 : 1;
+  const availableStock = Math.max(0, Number(row.Qty || 0));
+  return {
+    selected: availableStock > 0,
+    stockRow: row.No,
+    partNumber: row.NoStok,
+    description: row.Deskripsi,
+    batch: row.Batch,
+    stdQty: handoverQty,
+    qtyChecked: availableStock,
+    qtyIssued: Math.min(handoverQty, availableStock),
+    qtyReturned: 0,
+  };
+}
+
+function stockItemKey(row: StockRow) {
+  return String(row.No || `${row.NoStok}::${row.Batch}`);
+}
+
+function isBoneCement(row: StockRow) {
+  return (
+    String(row.Implant || "").trim().toUpperCase() === "BONE CEMENT" ||
+    /BONE\s*CEMENT|CEMENT TULANG/.test(
+      String(row.Deskripsi || "").toUpperCase()
+    )
+  );
+}
+
+function normalizeBrand(brand: unknown): HandoverBrand {
+  return String(brand || "").trim().toUpperCase() === "ZIMMER"
+    ? "ZIMMER"
+    : "NORMMED";
+}
+
+function matchesProcedure(row: StockRow, procedure: HandoverProcedure) {
+  const category = normalizeImplantCategory(row.Implant);
+  const description = String(row.Deskripsi || "").toUpperCase();
+  const isAccessory =
+    category === "AKSESORIS" ||
+    /AKSESORIS|ACCESSOR(?:Y|IES)|CABLE|ADAPTER/.test(description);
+  const isCement = isBoneCement(row);
+
+  // Aksesoris dan Bone Cement digunakan pada ketiga jenis tindakan.
+  if (isAccessory || isCement) return true;
+  // Head Metal harus tetap masuk Bipolar meski kategori data lama masih THR.
+  if (
+    procedure === "BIPOLAR" &&
+    (category === "HEAD METAL" || /HEAD\s*METAL|METAL\s*HEAD/.test(description))
+  ) {
+    return true;
+  }
+  const categories: Record<HandoverProcedure, string[]> = {
+    THR: [
+      "THR",
+      "STEM FEMUR",
+      "CUP ACETABULUM",
+      "HEAD METAL",
+      "HEAD CERAMIC",
+      "BONE SCREW",
+      "LINER CUP",
+      "AKSESORIS",
+      "BONE CEMENT",
+    ],
+    BIPOLAR: [
+      "STEM FEMUR",
+      "BIPOLAR",
+      "AKSESORIS",
+      "HEAD METAL",
+      "HEAD CERAMIC",
+      "LINER BIPOLAR",
+      "BONE CEMENT",
+    ],
+    TKR: [
+      "FEMORAL COMPONENT",
+      "TIBIAL COMPONENT",
+      "TKR",
+      "AKSESORIS",
+      "STEM TKR",
+      "INSERT TKR",
+      "BONE CEMENT",
+    ],
+  };
+
+  if (categories[procedure].includes(category)) return true;
+  // Fallback hanya untuk baris lama yang kategori implant-nya belum diisi.
+  if (category) return false;
+  if (procedure === "TKR") {
+    return /KNEE|TIBIAL|FEMORAL COMPONENT|INSERT/.test(description);
+  }
+  if (procedure === "THR") {
+    return /ACETABULAR|FEMORAL HEAD|TOTAL HIP/.test(description);
+  }
+  return /BIPOLAR/.test(description);
+}
+
+function normalizeImplantCategory(value: unknown) {
+  const category = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+  const aliases: Record<string, string> = {
+    BIPLAR: "BIPOLAR",
+    "ACETABULUM CUP": "CUP ACETABULUM",
+    "LINNER CUP": "LINER CUP",
+    "LINNER BIPOLAR": "LINER BIPOLAR",
+    "FEMORAL KOMPONEN": "FEMORAL COMPONENT",
+    "TIBIA KOMPONEN": "TIBIAL COMPONENT",
+    "TIBIAL KOMPONEN": "TIBIAL COMPONENT",
+    "TIBIA COMPONENT": "TIBIAL COMPONENT",
+  };
+  return aliases[category] || category;
+}
+
+function defaultInstruments(procedure: HandoverProcedure, brand: HandoverBrand): HandoverInstrument[] {
+  const shared = [
+    { selected: true, code: "INSTRUMENT", name: "SAW BLADE", qty: 2, unit: "PC", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: "POWERTOOLS", qty: 1, unit: "SET", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: "BATTERY", qty: 3, unit: "PC", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: "CHARGER", qty: 1, unit: "PC", condition: "SET" },
+  ];
+  if (procedure === "TKR") return [{ selected: true, code: "INSTRUMENT", name: `TKR ${brand}`, qty: 3, unit: "TRAY", condition: "SET" }, ...shared];
+  if (procedure === "THR") return [
+    { selected: true, code: "INSTRUMENT", name: `BIPOLAR ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: `THR ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: `STEM ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
+    ...shared,
+  ];
+  return [
+    { selected: true, code: "INSTRUMENT", name: `BIPOLAR ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: `STEM ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
+    ...shared,
+  ];
+}

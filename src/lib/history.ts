@@ -104,6 +104,59 @@ export function badge(action: string) {
     return "bg-blue-100 text-blue-700";
   }
 
+const FIELD_LABELS: Record<string, string> = {
+  NoStok: "REF implant",
+  Deskripsi: "Deskripsi",
+  Implant: "Kategori implant",
+  Brand: "Brand",
+  Batch: "LOT / Batch",
+  Qty: "Jumlah stok",
+  TotalQty: "Stok tersedia",
+  TERPAKAI: "Total terpakai",
+  REFILL: "Total refill",
+  KET: "Keterangan terbaru",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  CREATE: "Data implant ditambahkan",
+  UPDATE: "Data implant diperbarui",
+  DELETE: "Data implant dihapus",
+  DUPLICATE: "Data implant diduplikat",
+  OPERASI: "Implant terpakai untuk operasi",
+  REFILL: "Stok implant direfill",
+  MOBILISASI_KELUAR: "Implant dikirim untuk support",
+  MOBILISASI_MASUK: "Implant kembali dari support",
+};
+
+export function historyFieldLabel(field: string) {
+  return FIELD_LABELS[field] || field;
+}
+
+export function historyActionLabel(action: string) {
+  return ACTION_LABELS[String(action || "").toUpperCase()] || action || "Aktivitas";
+}
+
+export function historyActionTone(action: string) {
+  const value = String(action || "").toUpperCase();
+  if (value === "DELETE" || value === "OPERASI")
+    return "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300";
+  if (value === "REFILL" || value === "MOBILISASI_MASUK" || value === "CREATE")
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300";
+  if (value === "MOBILISASI_KELUAR")
+    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300";
+  return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300";
+}
+
+export function formatHistoryTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp || "-";
+  return new Intl.DateTimeFormat("id-ID", {
+    timeZone: "Asia/Makassar",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
 
 
   function normalizeChanges(raw: string): string {

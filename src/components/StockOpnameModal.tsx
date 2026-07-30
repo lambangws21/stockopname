@@ -142,7 +142,7 @@ export default function StockOpnameModal({
 
   return (
     <div className="fixed inset-0 z-[10010] flex items-end justify-center bg-zinc-950/60 backdrop-blur-sm sm:items-center sm:p-4">
-      <section className="flex max-h-[96vh] w-full max-w-5xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-3xl">
+      <section className="flex max-h-[100dvh] w-full max-w-5xl flex-col overflow-hidden rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[96vh] sm:rounded-3xl sm:pb-0">
         <header className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-5">
           <div>
             <div className="flex items-center gap-2 font-bold">

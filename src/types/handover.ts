@@ -1,0 +1,61 @@
+export type HandoverProcedure = "TKR" | "THR" | "BIPOLAR";
+export type HandoverStatus = "DRAFT" | "DIKIRIM" | "DITERIMA";
+
+export interface HandoverItem {
+  selected: boolean;
+  stockRow?: number;
+  partNumber: string;
+  description: string;
+  batch: string;
+  stdQty: number;
+  qtyChecked: number;
+  qtyIssued: number;
+  qtyReturned: number;
+  officeBefore?: number;
+  officeAfter?: number;
+  hospitalQty?: number;
+  usedQty?: number;
+  returnedQty?: number;
+  hospitalRemaining?: number;
+  locationStatus?: string;
+}
+
+export interface HandoverInstrument {
+  selected: boolean;
+  code: string;
+  name: string;
+  qty: number;
+  unit: string;
+  condition: string;
+  note?: string;
+}
+
+export interface OnlineHandover {
+  Row?: number;
+  ID?: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+  Procedure: HandoverProcedure;
+  Brand: string;
+  Hospital: string;
+  Surgeon: string;
+  ApprovedBy: string;
+  HandoverDate: string;
+  SetName: string;
+  Items: HandoverItem[];
+  Instruments: HandoverInstrument[];
+  Sender: string;
+  Checker1: string;
+  Checker2: string;
+  AcknowledgedBy: string;
+  Receiver: string;
+  Status: HandoverStatus;
+  SentAt?: string;
+  AcceptedAt?: string;
+  AcceptanceNote: string;
+  SenderSignature?: string;
+  ReceiverSignature?: string;
+  InventoryPostedAt?: string;
+  HospitalUpdatedAt?: string;
+  By?: string;
+}

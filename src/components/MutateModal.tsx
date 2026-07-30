@@ -178,7 +178,7 @@ export default function MutateModal({
           </div>
         </div>
       )}
-      <div className="max-h-[92vh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-w-lg sm:rounded-3xl">
+      <div className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:max-w-lg sm:rounded-3xl sm:pb-0">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-zinc-900/95">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-blue-600">

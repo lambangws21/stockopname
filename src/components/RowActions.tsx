@@ -23,6 +23,7 @@ export interface RowActionsProps {
   context?: GasSheetContext;
   onEdit: (row: StockRow) => void;
   onReload: () => Promise<void>;
+  showLabel?: boolean;
 
   /** OPTIONAL — untuk buka detail + history */
   onDetail?: (row: StockRow) => void;
@@ -35,6 +36,7 @@ export default function RowActions({
   onEdit,
   onReload,
   onDetail,
+  showLabel = false,
 }: RowActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
@@ -95,11 +97,16 @@ export default function RowActions({
         ref={triggerRef}
         type="button"
         onClick={() => setMenuOpen((x) => !x)}
-        className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+        className={`inline-flex min-h-10 items-center justify-center gap-2 rounded px-3 text-[11px] font-bold hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+          showLabel
+            ? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+            : ""
+        }`}
         aria-label="Buka menu tindakan"
         aria-expanded={menuOpen}
       >
         <MoreVertical size={18} />
+        {showLabel && <span>Aksi lainnya</span>}
       </button>
 
       {/* DROPDOWN MENU */}
@@ -123,7 +130,7 @@ export default function RowActions({
               }}
               className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             >
-              <Info size={14} /> Detail & History
+              <Info size={15} /> Detail & Riwayat
             </button>
           )}
 
@@ -135,7 +142,7 @@ export default function RowActions({
             }}
             className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            <Edit size={14} /> Edit
+            <Edit size={15} /> Edit data
           </button>
 
           {/* MUTASI */}
@@ -146,7 +153,7 @@ export default function RowActions({
             }}
             className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            <RefreshCcw size={14} /> Pergerakan Stok
+            <RefreshCcw size={15} /> Terpakai / Refill / Support
           </button>
 
           {/* DUPLICATE */}
@@ -157,7 +164,7 @@ export default function RowActions({
             }}
             className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            <Copy size={14} /> Duplicate
+            <Copy size={15} /> Duplikat data
           </button>
 
           {/* DELETE */}
@@ -168,7 +175,7 @@ export default function RowActions({
             }}
             className="w-full px-3 py-2 text-left text-red-600 flex items-center gap-2 hover:bg-red-50 dark:hover:bg-red-900/30"
           >
-            <Trash2 size={14} /> Delete
+            <Trash2 size={15} /> Hapus data
           </button>
         </div>,
         document.body,
