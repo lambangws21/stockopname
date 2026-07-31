@@ -21,9 +21,10 @@ function dateTime(value?: string) {
 
 export async function printHandoverDocument(
   handover: OnlineHandover,
-  verificationUrl: string
+  verificationUrl: string,
+  existingWindow?: Window | null
 ) {
-  const printWindow = window.open("", "_blank", "noopener,noreferrer");
+  const printWindow = existingWindow || window.open("", "_blank");
   if (!printWindow) throw new Error("Izinkan pop-up untuk mencetak dokumen");
 
   const { toDataURL } = await import("qrcode");
@@ -52,6 +53,7 @@ export async function printHandoverDocument(
         ? "MENUNGGU TANDA TANGAN"
         : "DRAFT";
 
+  printWindow.document.open();
   printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8">
     <title>Berita Acara ${escapeHtml(handover.ID)}</title>
     <style>

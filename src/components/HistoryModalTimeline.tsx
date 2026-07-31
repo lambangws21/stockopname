@@ -1,10 +1,12 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { GitCommit, X, ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { CheckSquare, GitCommit, X, ChevronDown, LoaderCircle, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useStockHistory } from "@/hooks/useStockHistory";
 import { HistoryRow } from "@/types/history";
+import { gasDeleteHistory } from "@/lib/gas";
+import { toast } from "sonner";
 import {
   formatHistoryTime,
   historyActionLabel,
@@ -28,8 +30,60 @@ export default function HistoryModalTimeline({
   sheet,
   No,
 }: Props) {
-  const { data, loading, error } = useStockHistory(sheet, No);
+  const { data, loading, error, refresh } = useStockHistory(sheet, No);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setSelecting(false);
+      setSelectedRows([]);
+      setOpenIndex(null);
+    }
+  }, [open]);
+
+  function historyRows(history: HistoryRow) {
+    return history.Rows || (history.Row ? [history.Row] : []);
+  }
+
+  function toggleHistory(history: HistoryRow) {
+    const rows = historyRows(history);
+    const selected = rows.length > 0 && rows.every((row) => selectedRows.includes(row));
+    setSelectedRows((current) =>
+      selected
+        ? current.filter((row) => !rows.includes(row))
+        : Array.from(new Set([...current, ...rows]))
+    );
+  }
+
+  async function deleteSelected() {
+    if (!selectedRows.length) return;
+    if (
+      !window.confirm(
+        `Hapus ${selectedRows.length} catatan history terpilih? Data stock tidak akan berubah.`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const result = await gasDeleteHistory(selectedRows);
+      toast.success(`${result.data?.deleted || selectedRows.length} history berhasil dihapus`);
+      setSelectedRows([]);
+      setSelecting(false);
+      refresh();
+    } catch (deleteError) {
+      toast.error(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "History gagal dihapus"
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <AnimatePresence>
@@ -48,13 +102,35 @@ export default function HistoryModalTimeline({
           >
             {/* HEADER */}
             <div className="flex items-center justify-between border-b px-4 py-4 sm:px-5">
-              <h2 className="font-bold text-sm flex items-center gap-2">
-                <GitCommit size={16} />
-                Riwayat Implant • Baris #{No}
-              </h2>
-              <button onClick={onClose} className="hover:text-red-500">
-                <X size={18} />
-              </button>
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-2 text-sm font-bold">
+                  <GitCommit size={16} />
+                  Riwayat Implant • Baris #{No}
+                </h2>
+                {selecting && (
+                  <p className="mt-0.5 text-[9px] font-bold text-red-600">
+                    {selectedRows.length} catatan dipilih
+                  </p>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelecting((value) => !value);
+                    setSelectedRows([]);
+                  }}
+                  className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-2 text-[9px] font-bold ${
+                    selecting ? "border-blue-200 bg-blue-50 text-blue-700" : ""
+                  }`}
+                >
+                  <CheckSquare size={14} />
+                  {selecting ? "Batal pilih" : "Pilih"}
+                </button>
+                <button onClick={onClose} className="flex size-9 items-center justify-center rounded-lg border hover:text-red-500">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {/* CONTENT */}
@@ -83,6 +159,10 @@ export default function HistoryModalTimeline({
                 {data.map((h: HistoryRow, i) => {
                   const changes = parseChanges(h.Changes);
                   const isOpen = openIndex === i;
+                  const rows = historyRows(h);
+                  const isSelected =
+                    rows.length > 0 &&
+                    rows.every((row) => selectedRows.includes(row));
 
                   return (
                     <div key={`${h.Timestamp}-${i}`} className="relative flex gap-3">
@@ -92,15 +172,32 @@ export default function HistoryModalTimeline({
                       </div>
 
                       {/* CARD */}
-                      <div className="bg-white dark:bg-zinc-800 border dark:border-zinc-700 rounded-lg w-full text-xs">
+                      <div className={`w-full rounded-lg border bg-white text-xs dark:bg-zinc-800 ${
+                        isSelected
+                          ? "border-red-400 ring-2 ring-red-100 dark:border-red-700 dark:ring-red-950"
+                          : "dark:border-zinc-700"
+                      }`}>
                         {/* CARD HEADER */}
                         <button
-                          onClick={() =>
-                            setOpenIndex(isOpen ? null : i)
-                          }
+                          onClick={() => {
+                            if (selecting) toggleHistory(h);
+                            else setOpenIndex(isOpen ? null : i);
+                          }}
                           className="w-full px-3 py-2 flex justify-between items-center hover:bg-zinc-50 dark:hover:bg-zinc-700/40 transition"
                         >
                           <div className="flex items-center gap-2">
+                            {selecting && (
+                              <span
+                                className={`flex size-4 items-center justify-center rounded border text-[10px] ${
+                                  isSelected
+                                    ? "border-red-600 bg-red-600 text-white"
+                                    : "border-zinc-300 bg-white"
+                                }`}
+                                aria-hidden="true"
+                              >
+                                {isSelected ? "✓" : ""}
+                              </span>
+                            )}
                             <span
                               className={`rounded-full border px-2 py-1 text-[10px] font-bold ${historyActionTone(
                                 h.Action
@@ -184,6 +281,31 @@ export default function HistoryModalTimeline({
                 })}
               </div>
             </div>
+            {selecting && (
+              <div className="grid grid-cols-2 gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-zinc-900">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allRows = data.flatMap(historyRows);
+                    setSelectedRows(
+                      selectedRows.length === allRows.length ? [] : allRows
+                    );
+                  }}
+                  className="h-11 rounded-xl border text-[10px] font-bold"
+                >
+                  {selectedRows.length ? "Batalkan semua" : "Pilih semua"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedRows.length || deleting}
+                  onClick={() => void deleteSelected()}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-40"
+                >
+                  {deleting ? <LoaderCircle size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  Hapus ({selectedRows.length})
+                </button>
+              </div>
+            )}
           </motion.div>
         </motion.div>
       )}

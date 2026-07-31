@@ -30,9 +30,16 @@ function normalizeTime(ts: string) {
       if (!existing) {
         map.set(key, {
           ...row,
+          Rows: row.Rows || (row.Row ? [row.Row] : []),
           Changes: normalizeChanges(row.Changes),
         });
       } else {
+        existing.Rows = Array.from(
+          new Set([
+            ...(existing.Rows || (existing.Row ? [existing.Row] : [])),
+            ...(row.Rows || (row.Row ? [row.Row] : [])),
+          ])
+        );
         // 🔥 GABUNGKAN CHANGES
         existing.Changes = JSON.stringify([
           ...parseChanges(existing.Changes),

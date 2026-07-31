@@ -1,4 +1,6 @@
 export interface HistoryRow {
+  Row?: number;
+  Rows?: number[];
   Timestamp: string;
   Action: string;
   Sheet: string;

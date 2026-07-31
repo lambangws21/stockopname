@@ -35,6 +35,7 @@ import {
 import { toast } from "sonner";
 import { gasGET } from "@/lib/gas";
 import {
+  deleteOnlineHandovers,
   listOnlineHandovers,
   saveOnlineHandover,
   settleOnlineHandover,
@@ -70,9 +71,12 @@ function OnlineHandoverContent() {
   const searchParams = useSearchParams();
   const requestedId = searchParams.get("id") || "";
   const requestedToken = searchParams.get("token") || "";
-  const [mobileItemsOpen, setMobileItemsOpen] = useState(false);
+  const [mobileItemsOpen, setMobileItemsOpen] = useState(true);
   const [localSavedAt, setLocalSavedAt] = useState("");
   const [printing, setPrinting] = useState(false);
+  const [mobileStep, setMobileStep] = useState<"info" | "items" | "signature">(
+    "info"
+  );
   const [stock, setStock] = useState<StockRow[]>([]);
   const [documents, setDocuments] = useState<OnlineHandover[]>([]);
   const [form, setForm] = useState<OnlineHandover>(() => emptyHandover("TKR"));
@@ -88,6 +92,9 @@ function OnlineHandoverContent() {
   const [accessorySelection, setAccessorySelection] = useState<string[]>([]);
   const [visibleAccessoryCount, setVisibleAccessoryCount] = useState(30);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [documentSelectMode, setDocumentSelectMode] = useState(false);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [deletingDocuments, setDeletingDocuments] = useState(false);
   const itemLoadMoreRef = useRef<HTMLDivElement>(null);
   const accessoryLoadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -109,7 +116,14 @@ function OnlineHandoverContent() {
       ) {
         throw new Error("Link verifikasi dokumen tidak valid atau tidak lengkap");
       }
-      if (requested) setForm(normalizeHandoverDocument(requested));
+      if (requested) {
+        const normalized = normalizeHandoverDocument(requested);
+        setForm(
+          normalized.Status === "DRAFT"
+            ? refreshDraftStock(normalized, stockRows)
+            : normalized
+        );
+      }
       else {
         const localDraft = readLocalHandoverDraft();
         setForm(
@@ -140,7 +154,12 @@ function OnlineHandoverContent() {
     }
     try {
       const detail = await listOnlineHandovers(document.ID);
-      setForm(normalizeHandoverDocument(detail[0] || document));
+      const normalized = normalizeHandoverDocument(detail[0] || document);
+      setForm(
+        normalized.Status === "DRAFT"
+          ? refreshDraftStock(normalized, stock)
+          : normalized
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Detail dokumen gagal dibuka"
@@ -428,6 +447,47 @@ function OnlineHandoverContent() {
     }
   }
 
+  function toggleDocumentSelection(document: OnlineHandover) {
+    if (!document.ID || !canDeleteHandover(document)) return;
+    setSelectedDocumentIds((current) =>
+      current.includes(document.ID!)
+        ? current.filter((id) => id !== document.ID)
+        : [...current, document.ID!]
+    );
+  }
+
+  async function deleteSelectedDocuments() {
+    if (!selectedDocumentIds.length) return;
+    if (
+      !window.confirm(
+        `Hapus permanen ${selectedDocumentIds.length} dokumen serah terima beserta tanda tangannya?\n\nSemua stok RS pada dokumen ini sudah harus berstatus TERPAKAI atau RETURN. Tindakan ini tidak dapat dibatalkan.`
+      )
+    ) {
+      return;
+    }
+    setDeletingDocuments(true);
+    try {
+      const result = await deleteOnlineHandovers(selectedDocumentIds);
+      const deleted = result.data?.deleted || result.deleted || selectedDocumentIds.length;
+      toast.success(`${deleted} dokumen serah terima berhasil dihapus`);
+      const updated = await listOnlineHandovers();
+      setDocuments(updated);
+      if (form.ID && selectedDocumentIds.includes(form.ID)) {
+        setForm(buildHandoverFromStock("TKR", "NORMMED", stock));
+      }
+      setSelectedDocumentIds([]);
+      setDocumentSelectMode(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Dokumen serah terima gagal dihapus"
+      );
+    } finally {
+      setDeletingDocuments(false);
+    }
+  }
+
   const sharePath = form.ID
     ? `/serah-terima?id=${form.ID}&token=${form.VerificationToken || ""}`
     : "";
@@ -441,13 +501,23 @@ function OnlineHandoverContent() {
       toast.error("Simpan dokumen terlebih dahulu sebelum mencetak");
       return;
     }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Popup diblokir. Izinkan popup untuk mencetak dokumen");
+      return;
+    }
+    printWindow.document.write(
+      '<!doctype html><title>Menyiapkan PDF...</title><body style="font-family:Arial;padding:40px;text-align:center">Menyiapkan Berita Acara dan QR Code...</body>'
+    );
+    printWindow.document.close();
     setPrinting(true);
     try {
       const { printHandoverDocument } = await import(
         "@/lib/handover-pdf"
       );
-      await printHandoverDocument(form, getShareUrl());
+      await printHandoverDocument(form, getShareUrl(), printWindow);
     } catch (error) {
+      printWindow.close();
       toast.error(error instanceof Error ? error.message : "PDF gagal dibuat");
     } finally {
       setPrinting(false);
@@ -494,8 +564,54 @@ function OnlineHandoverContent() {
     );
   }
 
+  function createSupplementShipment() {
+    if (!form.ID) return;
+    const originalId = form.ID;
+    const next = buildHandoverFromStock(
+      form.Procedure,
+      normalizeBrand(form.Brand),
+      stock
+    );
+    setForm({
+      ...next,
+      Hospital: form.Hospital,
+      Surgeon: form.Surgeon,
+      ApprovedBy: form.ApprovedBy,
+      HandoverDate: new Date().toISOString().slice(0, 10),
+      SetName: `${form.SetName || form.Procedure} · Tambahan`,
+      Sender: form.Sender,
+      Checker1: form.Checker1,
+      Checker2: form.Checker2,
+      AcknowledgedBy: form.AcknowledgedBy,
+      AcceptanceNote: `Kiriman tambahan untuk dokumen ${originalId}`,
+      Items: next.Items.map((item) => ({
+        ...item,
+        selected: false,
+        qtyIssued: 0,
+      })),
+      Instruments: next.Instruments.map((instrument) => ({
+        ...instrument,
+        selected: false,
+      })),
+    });
+    setItemSearch("");
+    setVisibleItemCount(30);
+    setMobileItemsOpen(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast.success(
+      `Draft kiriman tambahan dibuat. Pilih hanya implant yang kurang untuk ${originalId}`
+    );
+  }
+
+  function goToMobileStep(step: "info" | "items" | "signature") {
+    setMobileStep(step);
+    document
+      .getElementById(`handover-${step}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <main className="min-h-dvh bg-slate-50 pb-10 text-zinc-950 dark:bg-zinc-950 dark:text-white">
+    <main className="min-h-dvh bg-slate-50 pb-28 text-zinc-950 dark:bg-zinc-950 dark:text-white sm:pb-10">
       <header className="sticky top-0 z-40 bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white shadow-lg shadow-slate-950/10 sm:px-6">
         <div className="mx-auto max-w-[1600px]">
           <div className="flex items-center justify-between">
@@ -550,7 +666,32 @@ function OnlineHandoverContent() {
       ) : (
         <div className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[260px_minmax(0,1fr)]">
           <div className="order-1 min-w-0 space-y-4 xl:order-2">
-            <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
+            <nav className="sticky top-[118px] z-30 -mx-1 grid grid-cols-3 gap-1 rounded-2xl border bg-white/95 p-1.5 shadow-lg backdrop-blur sm:hidden dark:bg-zinc-900/95">
+              {[
+                ["info", "1. Info RS"],
+                ["items", `2. Item (${form.Items.length})`],
+                ["signature", "3. TTD"],
+              ].map(([step, label]) => (
+                <button
+                  key={step}
+                  type="button"
+                  onClick={() =>
+                    goToMobileStep(
+                      step as "info" | "items" | "signature"
+                    )
+                  }
+                  className={`h-10 rounded-xl text-[9px] font-black transition ${
+                    mobileStep === step
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "text-zinc-500"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </nav>
+
+            <section id="handover-info" className="scroll-mt-44 rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
               <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
                 {PROCEDURES.map((procedure) => (
                   <button
@@ -611,18 +752,18 @@ function OnlineHandoverContent() {
 
             <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.8fr)]">
               <div className="min-w-0 space-y-4">
-            <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+            <section id="handover-items" className="scroll-mt-44 overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
               <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
                 <div>
                   <button
                     type="button"
                     onClick={() => setMobileItemsOpen((current) => !current)}
-                    className="flex w-full items-center gap-2 text-left sm:pointer-events-none"
+                    className="flex w-full items-center gap-2 text-left lg:pointer-events-none"
                   >
                     <h2 className="text-sm font-black">Checklist Implant {form.Procedure}</h2>
                     <ChevronDown
                       size={16}
-                      className={`ml-auto transition sm:hidden ${mobileItemsOpen ? "rotate-180" : ""}`}
+                      className={`ml-auto transition lg:hidden ${mobileItemsOpen ? "rotate-180" : ""}`}
                     />
                   </button>
                   <p className="text-[10px] text-zinc-500">{selectedItems.length} dipilih · {issuedTotal} pcs dikeluarkan</p>
@@ -677,7 +818,7 @@ function OnlineHandoverContent() {
                 </div>
               </div>
 
-              <div className={`${mobileItemsOpen ? "space-y-2 p-2" : "hidden"} sm:hidden`}>
+              <div className={`${mobileItemsOpen ? "space-y-2 p-2" : "hidden"} lg:hidden`}>
                 {renderedItems.map(({ item, index }) => (
                   <HandoverItemCard
                     key={`${item.partNumber}-${item.batch}-${index}`}
@@ -692,7 +833,7 @@ function OnlineHandoverContent() {
                 )}
               </div>
 
-              <div className="hidden overflow-x-auto sm:block">
+              <div className="hidden overflow-x-auto lg:block">
                 <table className="w-full min-w-[920px] text-left text-xs">
                   <thead className="bg-slate-100 text-[9px] uppercase text-zinc-500 dark:bg-zinc-800">
                     <tr>
@@ -741,7 +882,7 @@ function OnlineHandoverContent() {
               </div>
 
               <div className="min-w-0 space-y-4 lg:sticky lg:top-28">
-            <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
+            <section id="handover-signature" className="scroll-mt-44 rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 sm:p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-black">Pihak Serah Terima</h2>
@@ -805,14 +946,17 @@ function OnlineHandoverContent() {
               </div>
             </div>
 
-            <div className="sticky bottom-0 z-30 -mx-3 grid grid-cols-3 gap-1.5 border-t bg-slate-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur dark:bg-zinc-950/95 sm:static sm:mx-0 sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
+            <div className="hidden grid-cols-3 gap-2 sm:grid">
               <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
               <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">Kirim ke penerima</span></button>
               <button disabled={saving || form.Status !== "DIKIRIM"} onClick={() => void accept()} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><PackageCheck size={15} /> <span className="sm:hidden">Terima</span><span className="hidden sm:inline">Terima & setujui</span></button>
             </div>
 
             {sharePath && form.Status !== "DRAFT" && (
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <button type="button" onClick={createSupplementShipment} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-xs font-bold text-white">
+                  <Plus size={16} /> Kiriman Tambahan
+                </button>
                 <button type="button" onClick={() => setShareModalOpen(true)} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-bold text-white"><MessageCircle size={16} /> Buka link & bagikan ke WhatsApp</button>
                 <button type="button" disabled={printing} onClick={() => void printDocument()} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border bg-white text-xs font-bold text-slate-800 disabled:opacity-50 dark:bg-zinc-900 dark:text-white">
                   {printing ? <LoaderCircle size={16} className="animate-spin" /> : <Printer size={16} />} Cetak Berita Acara (PDF)
@@ -822,23 +966,78 @@ function OnlineHandoverContent() {
           </div>
 
           <aside className="order-2 h-fit rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 xl:order-1 xl:sticky xl:top-28">
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between gap-2 px-1">
               <div>
                 <h2 className="text-sm font-black">Dokumen Terbaru</h2>
                 <p className="mt-0.5 text-[9px] text-zinc-400">
                   {documents.length} dokumen tersimpan
                 </p>
               </div>
-              <button type="button" onClick={() => setForm(buildHandoverFromStock("TKR", "NORMMED", stock))} className="text-[10px] font-bold text-blue-600">Dokumen baru</button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDocumentSelectMode((value) => !value);
+                    setSelectedDocumentIds([]);
+                  }}
+                  className={`rounded-lg border px-2 py-1.5 text-[9px] font-bold ${
+                    documentSelectMode
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : ""
+                  }`}
+                >
+                  {documentSelectMode ? "Batal" : "Pilih"}
+                </button>
+                <button type="button" onClick={() => setForm(buildHandoverFromStock("TKR", "NORMMED", stock))} className="text-[10px] font-bold text-blue-600">+ Baru</button>
+              </div>
             </div>
+            {documentSelectMode && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[9px] leading-4 text-amber-800">
+                Draft dapat langsung dihapus. Dokumen diterima hanya dapat dihapus setelah seluruh implant ditandai <b>TERPAKAI</b> atau <b>RETURN</b>. Dokumen yang masih dikirim tidak dapat dihapus.
+              </div>
+            )}
             <div className="mt-3 space-y-2">
               {documents.slice(0, 10).map((document, index) => (
-                <DocumentSummaryCard
+                <div
                   key={document.ID || `draft-${index}`}
-                  document={document}
-                  active={form.ID === document.ID}
-                  onClick={() => void openSavedDocument(document)}
-                />
+                  className="flex items-start gap-2"
+                >
+                  {documentSelectMode && (
+                    <button
+                      type="button"
+                      disabled={!document.ID || !canDeleteHandover(document)}
+                      onClick={() => toggleDocumentSelection(document)}
+                      className={`mt-3 flex size-5 shrink-0 items-center justify-center rounded border text-[10px] font-black disabled:cursor-not-allowed disabled:opacity-30 ${
+                        document.ID && selectedDocumentIds.includes(document.ID)
+                          ? "border-red-600 bg-red-600 text-white"
+                          : "bg-white"
+                      }`}
+                      aria-label={`Pilih ${document.ID || "dokumen"}`}
+                      title={
+                        canDeleteHandover(document)
+                          ? "Pilih dokumen"
+                          : document.Status === "DIKIRIM"
+                            ? "Dokumen masih dalam pengiriman"
+                            : "Masih ada implant yang belum ditandai terpakai atau return"
+                      }
+                    >
+                      {document.ID && selectedDocumentIds.includes(document.ID)
+                        ? "✓"
+                        : ""}
+                    </button>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <DocumentSummaryCard
+                      document={document}
+                      active={form.ID === document.ID}
+                      onClick={() =>
+                        documentSelectMode
+                          ? toggleDocumentSelection(document)
+                          : void openSavedDocument(document)
+                      }
+                    />
+                  </div>
+                </div>
               ))}
               {documents.length === 0 && (
                 <p className="rounded-xl border border-dashed p-5 text-center text-[10px] text-zinc-500">
@@ -846,7 +1045,65 @@ function OnlineHandoverContent() {
                 </p>
               )}
             </div>
+            {documentSelectMode && (
+              <button
+                type="button"
+                disabled={!selectedDocumentIds.length || deletingDocuments}
+                onClick={() => void deleteSelectedDocuments()}
+                className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-600 text-[10px] font-black text-white disabled:opacity-40"
+              >
+                {deletingDocuments ? (
+                  <LoaderCircle size={15} className="animate-spin" />
+                ) : (
+                  <Trash2 size={15} />
+                )}
+                Hapus Dokumen ({selectedDocumentIds.length})
+              </button>
+            )}
           </aside>
+        </div>
+      )}
+
+      {!loading && (
+        <div className="fixed inset-x-0 bottom-0 z-[70] grid grid-cols-3 gap-2 border-t bg-white/95 px-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_25px_rgba(15,23,42,0.12)] backdrop-blur sm:hidden dark:border-zinc-800 dark:bg-zinc-950/95">
+          <button
+            type="button"
+            disabled={saving || form.Status !== "DRAFT"}
+            onClick={() => void persist("DRAFT")}
+            className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl border bg-white text-[10px] font-black disabled:opacity-40 dark:bg-zinc-900"
+          >
+            {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Save size={15} />}
+            Simpan BAST
+          </button>
+          <button
+            type="button"
+            disabled={
+              saving ||
+              (form.Status === "DITERIMA")
+            }
+            onClick={() =>
+              form.Status === "DRAFT"
+                ? void persist("DIKIRIM")
+                : void accept()
+            }
+            className={`inline-flex h-12 items-center justify-center gap-1.5 rounded-xl text-[10px] font-black text-white disabled:opacity-40 ${
+              form.Status === "DIKIRIM" ? "bg-emerald-600" : "bg-blue-600"
+            }`}
+          >
+            {form.Status === "DIKIRIM" ? <PackageCheck size={15} /> : <Send size={15} />}
+            {form.Status === "DIKIRIM" ? "Terima" : form.Status === "DITERIMA" ? "Selesai" : "Kirim"}
+          </button>
+          <button
+            type="button"
+            disabled={!form.ID || printing}
+            onClick={() => void printDocument()}
+            className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-[10px] font-black text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+            aria-label="Cetak PDF"
+            title="Cetak PDF"
+          >
+            {printing ? <LoaderCircle size={16} className="animate-spin" /> : <Printer size={16} />}
+            Cetak PDF
+          </button>
         </div>
       )}
 
@@ -1160,6 +1417,24 @@ function normalizeHandoverDocument(document: OnlineHandover): OnlineHandover {
   };
 }
 
+function canDeleteHandover(document: OnlineHandover) {
+  if (document.Status === "DRAFT") return true;
+  if (document.Status !== "DITERIMA") return false;
+  return document.Items.every((item) => {
+    const sent = Math.max(
+      0,
+      Number(
+        item.hospitalQty === undefined ? item.qtyIssued : item.hospitalQty
+      ) || 0
+    );
+    if (sent <= 0) return true;
+    const accounted =
+      Math.max(0, Number(item.usedQty || 0)) +
+      Math.max(0, Number(item.returnedQty || 0));
+    return accounted >= sent;
+  });
+}
+
 function normalizeDateInput(value: string | undefined) {
   const raw = String(value || "").trim();
   const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -1167,8 +1442,9 @@ function normalizeDateInput(value: string | undefined) {
 }
 
 function HandoverItemRow({ item, onChange }: { item: HandoverItem; onChange: (item: HandoverItem) => void }) {
-  const stockWarning = item.qtyChecked < item.stdQty;
-  return <tr className={`border-t ${stockWarning ? "bg-[#FEF2F2] text-red-900 outline outline-1 -outline-offset-1 outline-red-300 dark:bg-red-950/25 dark:text-red-100 dark:outline-red-800" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={item.qtyChecked <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{stockWarning && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">{item.qtyChecked <= 0 ? "STOK HABIS" : "STOK KURANG"}</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || item.qtyChecked <= 0} value={item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && stockWarning ? "border-red-500 bg-red-100 text-red-700 ring-2 ring-red-200 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
+  const officeStock = itemOfficeStock(item);
+  const stockWarning = officeStock < item.stdQty;
+  return <tr className={`border-t ${stockWarning ? "bg-[#FEF2F2] text-red-900 outline outline-1 -outline-offset-1 outline-red-300 dark:bg-red-950/25 dark:text-red-100 dark:outline-red-800" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={officeStock <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{stockWarning && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">{officeStock <= 0 ? "STOK HABIS" : "STOK KURANG"}</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || officeStock <= 0} value={field === "qtyChecked" ? officeStock : item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && stockWarning ? "border-red-500 bg-red-100 text-red-700 ring-2 ring-red-200 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
 }
 
 function HandoverItemCard({
@@ -1178,6 +1454,7 @@ function HandoverItemCard({
   item: HandoverItem;
   onChange: (item: HandoverItem) => void;
 }) {
+  const officeStock = itemOfficeStock(item);
   const fields = [
     ["stdQty", "Kebutuhan"],
     ["qtyChecked", "Stok Office"],
@@ -1187,8 +1464,10 @@ function HandoverItemCard({
   return (
     <article
       className={`overflow-hidden rounded-xl border ${
-        item.qtyChecked < item.stdQty
-          ? "border-2 border-red-400 bg-[#FEF2F2] shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none"
+        officeStock < item.stdQty
+          ? `border-2 border-red-400 bg-[#FEF2F2] shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none ${
+              officeStock <= 0 ? "border-l-[6px] border-l-red-600" : ""
+            }`
           : item.selected
           ? "border-blue-200 bg-white dark:border-blue-900 dark:bg-zinc-900"
           : "bg-slate-50 opacity-55 dark:bg-zinc-900"
@@ -1198,7 +1477,7 @@ function HandoverItemCard({
         <input
           type="checkbox"
           checked={item.selected}
-          disabled={item.qtyChecked <= 0}
+          disabled={officeStock <= 0}
           onChange={(event) =>
             onChange(toggleHandoverItem(item, event.target.checked))
           }
@@ -1206,32 +1485,45 @@ function HandoverItemCard({
           aria-label={`Pilih ${item.partNumber}`}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-start justify-between gap-2">
+            <p className="min-w-0 flex-1 text-xs font-black leading-4">
+              {item.description || "Tanpa deskripsi"}
+            </p>
+            <span
+              className={`shrink-0 rounded-md px-2 py-1 text-[8px] font-black ${
+                officeStock <= 0
+                  ? "bg-red-600 text-white"
+                  : officeStock < item.stdQty
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              {officeStock <= 0
+                ? "HABIS"
+                : officeStock < item.stdQty
+                  ? "KURANG"
+                  : "TERSEDIA"}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-              {item.partNumber || "Tanpa REF"}
+              REF {item.partNumber || "-"}
             </span>
             <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
               LOT {item.batch || "-"}
             </span>
             <span
               className={`rounded-md px-2 py-1 text-[9px] font-black ${
-                item.qtyChecked <= 0
+                officeStock <= 0
                   ? "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                  : item.qtyChecked < item.stdQty
+                  : officeStock < item.stdQty
                     ? "bg-amber-50 text-amber-700"
                     : "bg-emerald-50 text-emerald-700"
               }`}
             >
-              {item.qtyChecked <= 0
-                ? "STOK HABIS · 0"
-                : item.qtyChecked < item.stdQty
-                  ? `STOK ${item.qtyChecked} · KURANG`
-                  : `STOK ${item.qtyChecked}`}
+              OFFICE {officeStock} PCS
             </span>
           </div>
-          <p className="mt-2 text-xs font-bold leading-4">
-            {item.description || "Tanpa deskripsi"}
-          </p>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-px border-t bg-slate-200 dark:bg-zinc-800">
@@ -1252,7 +1544,7 @@ function HandoverItemCard({
                   : undefined
               }
               disabled={field !== "qtyIssued" || !item.selected}
-              value={item[field]}
+              value={field === "qtyChecked" ? officeStock : item[field]}
               onChange={(event) =>
                 onChange(
                   changeItemQuantity(
@@ -1263,7 +1555,7 @@ function HandoverItemCard({
                 )
               }
               className={`mt-1 h-9 w-full rounded-lg border bg-white px-1 text-center text-sm font-black disabled:bg-slate-100 disabled:text-zinc-500 dark:bg-zinc-950 dark:disabled:bg-zinc-800 ${
-                field === "qtyChecked" && item.qtyChecked < item.stdQty
+                field === "qtyChecked" && officeStock < item.stdQty
                   ? "border-red-500 bg-red-50 text-red-700 ring-2 ring-red-100"
                   : ""
               }`}
@@ -1495,6 +1787,7 @@ function HospitalInventorySection({
   onChange: (items: HandoverItem[]) => void;
   onSave: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
   const hospitalItems = items
@@ -1515,6 +1808,9 @@ function HospitalInventorySection({
   const allVisibleSelected =
     selectableVisibleIndexes.length > 0 &&
     selectableVisibleIndexes.every((index) => selectedIndexes.includes(index));
+  const unresolvedCount = hospitalItems.filter(
+    ({ item }) => getHospitalRemaining(item) > 0
+  ).length;
 
   function toggleSelected(index: number) {
     setSelectedIndexes((current) =>
@@ -1574,21 +1870,41 @@ function HospitalInventorySection({
 
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-sm dark:border-blue-900 dark:bg-zinc-900">
-      <div className="bg-blue-50 p-4 dark:bg-blue-950/30">
-        <div className="flex items-start gap-3">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-3 bg-blue-50 p-4 text-left transition hover:bg-blue-100/70 dark:bg-blue-950/30 dark:hover:bg-blue-950/50"
+        aria-expanded={open}
+      >
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
             <Hospital size={18} />
           </span>
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-sm font-black">Stock di Rumah Sakit</h2>
             <p className="mt-0.5 text-[10px] text-zinc-500">
-              {hospital || "Rumah sakit"} · tandai implant terpakai atau
-              dikembalikan setelah operasi.
+              {hospital || "Rumah sakit"} · {hospitalItems.length} item ·{" "}
+              {unresolvedCount} belum diselesaikan
             </p>
           </div>
-        </div>
-      </div>
+          <span
+            className={`rounded-full px-2 py-1 text-[8px] font-black ${
+              unresolvedCount > 0
+                ? "bg-amber-100 text-amber-700"
+                : "bg-emerald-100 text-emerald-700"
+            }`}
+          >
+            {unresolvedCount > 0 ? `${unresolvedCount} DI RS` : "SELESAI"}
+          </span>
+          <ChevronDown
+            size={18}
+            className={`shrink-0 text-blue-600 transition-transform ${
+              open ? "rotate-180" : ""
+            }`}
+          />
+      </button>
 
+      {open && (
+        <>
       <div className="space-y-2 p-2 sm:p-4">
         <div className="sticky top-2 z-20 rounded-xl border bg-white/95 p-2 shadow-sm backdrop-blur dark:bg-zinc-900/95">
           <label className="relative block">
@@ -1791,6 +2107,8 @@ function HospitalInventorySection({
           </p>
         )}
       </div>
+        </>
+      )}
     </section>
   );
 }
@@ -2154,7 +2472,7 @@ function SignaturePad({
         </div>
         {!disabled && (
           <button type="button" onClick={clear} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-[10px] font-bold text-red-600 shadow-sm hover:bg-red-50">
-            <Eraser size={14} /> Reset
+            <Eraser size={14} /> Hapus
           </button>
         )}
       </div>
@@ -2258,9 +2576,59 @@ function buildHandoverFromStock(procedure: HandoverProcedure, brand: HandoverBra
   return base;
 }
 
+function stockAvailable(row: StockRow) {
+  const total = Number(row.TotalQty);
+  return Math.max(
+    0,
+    Number.isFinite(total) ? total : Number(row.Qty || 0)
+  );
+}
+
+function itemOfficeStock(item: HandoverItem) {
+  if (item.officeAfter !== undefined && item.officeAfter !== null) {
+    return Math.max(0, Number(item.officeAfter) || 0);
+  }
+  return Math.max(0, Number(item.qtyChecked) || 0);
+}
+
+function refreshDraftStock(
+  document: OnlineHandover,
+  rows: StockRow[]
+): OnlineHandover {
+  const byRow = new Map(rows.map((row) => [Number(row.No), row]));
+  const byKey = new Map(
+    rows.map((row) => [
+      `${String(row.NoStok).trim()}::${String(row.Batch).trim()}`,
+      row,
+    ])
+  );
+  return {
+    ...document,
+    Items: document.Items.map((item) => {
+      const stockRow =
+        byRow.get(Number(item.stockRow || 0)) ||
+        byKey.get(
+          `${String(item.partNumber).trim()}::${String(item.batch).trim()}`
+        );
+      if (!stockRow) return item;
+      const available = stockAvailable(stockRow);
+      return {
+        ...item,
+        stockRow: stockRow.No,
+        qtyChecked: available,
+        selected: available > 0 ? item.selected : false,
+        qtyIssued:
+          available > 0
+            ? Math.min(Number(item.qtyIssued || 0), available, item.stdQty)
+            : 0,
+      };
+    }),
+  };
+}
+
 function stockRowToHandoverItem(row: StockRow): HandoverItem {
   const handoverQty = isBoneCement(row) ? 2 : 1;
-  const availableStock = Math.max(0, Number(row.Qty || 0));
+  const availableStock = stockAvailable(row);
   return {
     selected: availableStock > 0,
     stockRow: row.No,

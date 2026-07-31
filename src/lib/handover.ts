@@ -62,3 +62,24 @@ export async function settleOnlineHandover(
   }
   return json;
 }
+
+export async function deleteOnlineHandovers(ids: string[]) {
+  const response = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "handoverDelete",
+      ids,
+    }),
+  });
+  const json = (await response.json()) as {
+    status: "success" | "error";
+    message?: string;
+    deleted?: number;
+    data?: { deleted: number };
+  };
+  if (!response.ok || json.status === "error") {
+    throw new Error(json.message || "Dokumen serah terima gagal dihapus");
+  }
+  return json;
+}

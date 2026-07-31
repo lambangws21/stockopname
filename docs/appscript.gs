@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 30;
+const APP_VERSION = 35;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -756,7 +756,7 @@ function dispatchHandoverInventory(payload) {
 
   Object.keys(requiredByRow).forEach(function (rowKey) {
     const rowNumber = safeNumber(rowKey);
-    const available = safeNumber(stockRows[rowNumber - 1][5]);
+    const available = safeNumber(stockRows[rowNumber - 1][6]);
     if (available < requiredByRow[rowKey]) {
       throw new Error(
         "Stock " +
@@ -777,13 +777,13 @@ function dispatchHandoverInventory(payload) {
       : 0;
     const rowNumber = resolvedRows[index];
     const officeBefore = rowNumber
-      ? safeNumber(stockRows[rowNumber - 1][5])
+      ? safeNumber(stockRows[rowNumber - 1][6])
       : 0;
     if (qty > 0) {
       const stockIndex = rowNumber - 1;
       const before = rowArrayToObject(stockRows[stockIndex], rowNumber);
       const updated = stockRows[stockIndex].slice();
-      updated[5] = safeNumber(updated[5]) - qty;
+      updated[5] = safeNumber(updated[6]) - qty;
       updated[6] = updated[5];
       updated[9] = buildMovementDescription(
         "MOBILISASI_KELUAR",
@@ -985,6 +985,95 @@ function acceptHandover(payload) {
     ? payload.Instruments
     : current.Instruments;
   return saveHandover(current);
+}
+
+function deleteHandovers(payload) {
+  const ids = (Array.isArray(payload.ids) ? payload.ids : [])
+    .map(function (id) {
+      return String(id || "").trim();
+    })
+    .filter(function (id, index, values) {
+      return id && values.indexOf(id) === index;
+    });
+  if (!ids.length) {
+    return { status: "error", message: "Pilih minimal satu dokumen serah terima" };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return { status: "error", message: "Dokumen sedang diproses, coba lagi" };
+  }
+  try {
+    const sheet = getHandoverSheet();
+    const rows = sheet.getDataRange().getValues();
+    const targets = [];
+    const found = {};
+    rows.slice(1).forEach(function (row, index) {
+      const id = String(row[0] || "");
+      if (ids.indexOf(id) < 0) return;
+      found[id] = true;
+      const status = String(row[17] || "DRAFT").toUpperCase();
+      if (status === "DIKIRIM") {
+        throw new Error(
+          "Dokumen " + id + " masih dalam pengiriman. Terima dan selesaikan stok RS terlebih dahulu."
+        );
+      }
+      if (status === "DITERIMA") {
+        let items = [];
+        try {
+          items = JSON.parse(String(row[10] || "[]"));
+        } catch (err) {
+          throw new Error("Data implant dokumen " + id + " tidak dapat dibaca");
+        }
+        const unresolved = items.filter(function (item) {
+          const sent = Math.max(
+            0,
+            safeNumber(
+              item.hospitalQty === undefined
+                ? item.qtyIssued
+                : item.hospitalQty
+            )
+          );
+          if (sent <= 0) return false;
+          const accounted =
+            Math.max(0, safeNumber(item.usedQty)) +
+            Math.max(0, safeNumber(item.returnedQty));
+          return accounted < sent;
+        });
+        if (unresolved.length) {
+          throw new Error(
+            "Dokumen " +
+              id +
+              " masih memiliki " +
+              unresolved.length +
+              " item di rumah sakit. Tandai terpakai atau return ke office terlebih dahulu."
+          );
+        }
+      }
+      targets.push(index + 2);
+    });
+    const missing = ids.filter(function (id) {
+      return !found[id];
+    });
+    if (missing.length) {
+      throw new Error("Dokumen tidak ditemukan: " + missing.join(", "));
+    }
+    targets
+      .sort(function (a, b) {
+        return b - a;
+      })
+      .forEach(function (rowNumber) {
+        sheet.deleteRow(rowNumber);
+      });
+    return {
+      status: "success",
+      deleted: targets.length,
+      data: { deleted: targets.length },
+      message: targets.length + " dokumen serah terima berhasil dihapus setelah rekonsiliasi stok selesai.",
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function settleHandoverInventory(payload) {
@@ -1630,13 +1719,20 @@ function getHistory(e) {
 
   const data = rows
     .slice(1)
-    .filter(function (r) {
+    .map(function (r, index) {
+      return { values: r, rowNumber: index + 2 };
+    })
+    .filter(function (entry) {
+      const r = entry.values;
       if (targetSheet && r[idx.Sheet] !== targetSheet) return false;
       if (targetNo && safeNumber(r[idx.No]) !== targetNo) return false;
       return true;
     })
-    .map(function (r) {
+    .map(function (entry) {
+      const r = entry.values;
       return {
+        Row: entry.rowNumber,
+        Rows: [entry.rowNumber],
         Timestamp: r[idx.Timestamp],
         Action: r[idx.Action],
         Sheet: r[idx.Sheet],
@@ -1648,6 +1744,48 @@ function getHistory(e) {
     .reverse();
 
   return { status: "success", data: data };
+}
+
+function deleteHistoryRows(payload) {
+  const requestedRows = Array.isArray(payload.rows) ? payload.rows : [];
+  const rows = requestedRows
+    .map(safeNumber)
+    .filter(function (row) {
+      return row >= 2;
+    })
+    .filter(function (row, index, values) {
+      return values.indexOf(row) === index;
+    })
+    .sort(function (a, b) {
+      return b - a;
+    });
+  if (!rows.length) {
+    return { status: "error", message: "Pilih minimal satu riwayat" };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    return { status: "error", message: "History sedang diproses, coba lagi" };
+  }
+  try {
+    const sheet = getSheet("History");
+    const lastRow = sheet.getLastRow();
+    let deleted = 0;
+    rows.forEach(function (row) {
+      if (row <= lastRow && row >= 2) {
+        sheet.deleteRow(row);
+        deleted++;
+      }
+    });
+    return {
+      status: "success",
+      deleted: deleted,
+      data: { deleted: deleted },
+      message: deleted + " catatan history berhasil dihapus",
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function handleCreate(body) {
@@ -2599,6 +2737,7 @@ function doGet(e) {
             "mutasi",
             "duplicate",
             "history",
+            "historyDelete",
             "scanLookup",
             "kpi",
             "setupSheet",
@@ -2670,7 +2809,9 @@ function doPost(e) {
     if (payload.action === "customerDelete") return cors(deleteCustomer(payload));
     if (payload.action === "customerJourney") return cors(advanceCustomerJourney(payload));
     if (payload.action === "warningUpdate") return cors(updateStockWarningWorkflow(payload));
+    if (payload.action === "historyDelete") return cors(deleteHistoryRows(payload));
     if (payload.action === "handoverSave") return cors(saveHandover(payload));
+    if (payload.action === "handoverDelete") return cors(deleteHandovers(payload));
     if (payload.action === "handoverAccept") return cors(acceptHandover(payload));
     if (payload.action === "handoverSettle") {
       return cors(settleHandoverInventory(payload));

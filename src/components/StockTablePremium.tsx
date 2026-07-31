@@ -166,12 +166,14 @@ export default function StockTablePremium({
   context,
   title = "📦 Stock Management",
   onOpenScanner,
+  opnameRequest = 0,
 }: {
   sheet?: string;
   externalScan?: ExternalScanPayload | null;
   context?: GasSheetContext;
   title?: string;
   onOpenScanner?: () => void;
+  opnameRequest?: number;
 }) {
   const [lowStockAlertOpen, setLowStockAlertOpen] = useState(false);
 
@@ -217,6 +219,10 @@ export default function StockTablePremium({
   const [lowStockThreshold, setLowStockThreshold] = useState(1);
   const [opnameOpen, setOpnameOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    if (opnameRequest > 0) setOpnameOpen(true);
+  }, [opnameRequest]);
 
   const [isCreate, setIsCreate] = useState(false);
 

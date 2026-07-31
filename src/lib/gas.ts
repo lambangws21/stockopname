@@ -223,6 +223,13 @@ export function gasGetHistoryWithContext(
   return request<HistoryRow[]>("GET", undefined, params.toString());
 }
 
+export function gasDeleteHistory(rows: number[]) {
+  return request<{ deleted: number }>("POST", {
+    action: "historyDelete",
+    rows,
+  });
+}
+
 
 export function parseChanges(raw: string): HistoryChange[] {
   try {
