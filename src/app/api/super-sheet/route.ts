@@ -221,6 +221,34 @@ export async function POST(req: NextRequest) {
     const timeoutMs = transactionActions.has(action)
       ? GAS_TRANSACTION_TIMEOUT_MS
       : GAS_WRITE_TIMEOUT_MS;
+    if (transactionActions.has(action)) {
+      const forwardedFor = req.headers.get("x-forwarded-for");
+      body.RequestMeta = {
+        ipAddress:
+          forwardedFor?.split(",")[0]?.trim() ||
+          req.headers.get("x-real-ip") ||
+          "Tidak tersedia",
+        userAgent: req.headers.get("user-agent") || "Tidak tersedia",
+      };
+      if (
+        body.SenderSignatureMeta &&
+        typeof body.SenderSignatureMeta === "object"
+      ) {
+        body.SenderSignatureMeta = {
+          ...(body.SenderSignatureMeta as Record<string, unknown>),
+          ...(body.RequestMeta as Record<string, unknown>),
+        };
+      }
+      if (
+        body.ReceiverSignatureMeta &&
+        typeof body.ReceiverSignatureMeta === "object"
+      ) {
+        body.ReceiverSignatureMeta = {
+          ...(body.ReceiverSignatureMeta as Record<string, unknown>),
+          ...(body.RequestMeta as Record<string, unknown>),
+        };
+      }
+    }
     return NextResponse.json(await fetchGasJson(gasUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

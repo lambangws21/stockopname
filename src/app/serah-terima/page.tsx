@@ -16,6 +16,8 @@ import {
   ArrowUp,
   ClipboardSignature,
   Copy,
+  ChevronDown,
+  Clock3,
   Eraser,
   ExternalLink,
   Hospital,
@@ -23,6 +25,7 @@ import {
   MessageCircle,
   PackageCheck,
   Plus,
+  Printer,
   Save,
   Search,
   Send,
@@ -41,6 +44,7 @@ import type {
   HandoverInstrument,
   HandoverItem,
   HandoverProcedure,
+  HandoverSignatureAudit,
   OnlineHandover,
 } from "@/types/handover";
 
@@ -65,6 +69,10 @@ export default function OnlineHandoverPage() {
 function OnlineHandoverContent() {
   const searchParams = useSearchParams();
   const requestedId = searchParams.get("id") || "";
+  const requestedToken = searchParams.get("token") || "";
+  const [mobileItemsOpen, setMobileItemsOpen] = useState(false);
+  const [localSavedAt, setLocalSavedAt] = useState("");
+  const [printing, setPrinting] = useState(false);
   const [stock, setStock] = useState<StockRow[]>([]);
   const [documents, setDocuments] = useState<OnlineHandover[]>([]);
   const [form, setForm] = useState<OnlineHandover>(() => emptyHandover("TKR"));
@@ -95,8 +103,19 @@ function OnlineHandoverContent() {
       const stockRows = stockResult.data ?? [];
       setStock(stockRows);
       const requested = requestedDocuments[0];
+      if (
+        requested?.VerificationToken &&
+        requested.VerificationToken !== requestedToken
+      ) {
+        throw new Error("Link verifikasi dokumen tidak valid atau tidak lengkap");
+      }
       if (requested) setForm(normalizeHandoverDocument(requested));
-      else setForm(buildHandoverFromStock("TKR", "NORMMED", stockRows));
+      else {
+        const localDraft = readLocalHandoverDraft();
+        setForm(
+          localDraft || buildHandoverFromStock("TKR", "NORMMED", stockRows)
+        );
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Data gagal dimuat");
     } finally {
@@ -112,7 +131,7 @@ function OnlineHandoverContent() {
           error instanceof Error ? error.message : "Riwayat gagal dimuat"
         )
       );
-  }, [requestedId]);
+  }, [requestedId, requestedToken]);
 
   async function openSavedDocument(document: OnlineHandover) {
     if (!document.ID) {
@@ -132,6 +151,15 @@ function OnlineHandoverContent() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (loading || requestedId || form.Status !== "DRAFT") return;
+    const timeout = window.setTimeout(() => {
+      localStorage.setItem("implant-handover-autosave-v1", JSON.stringify(form));
+      setLocalSavedAt(new Date().toISOString());
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [form, loading, requestedId]);
 
   const filteredItems = useMemo(() => {
     const query = itemSearch.trim().toLowerCase();
@@ -313,6 +341,8 @@ function OnlineHandoverContent() {
       ...form,
       ID: form.ID || `ST-${crypto.randomUUID()}`,
       Status: status,
+      VerificationToken:
+        form.VerificationToken || createVerificationToken(),
     } as OnlineHandover;
     // ID disimpan sebelum request agar retry manual tidak menggandakan
     // pengurangan stok bila respons pertama terlambat.
@@ -326,6 +356,7 @@ function OnlineHandoverContent() {
           : "Draft berhasil disimpan"
       );
       if (status === "DIKIRIM") {
+        localStorage.removeItem("implant-handover-autosave-v1");
         setShareModalOpen(true);
         void Promise.all([gasGET("Sheet1"), listOnlineHandovers()])
           .then(([latestStock, updated]) => {
@@ -362,6 +393,7 @@ function OnlineHandoverContent() {
         true
       );
       if (result.data) setForm(normalizeHandoverDocument(result.data));
+      localStorage.removeItem("implant-handover-autosave-v1");
       toast.success("Serah terima berhasil diterima");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menerima");
@@ -396,10 +428,30 @@ function OnlineHandoverContent() {
     }
   }
 
-  const sharePath = form.ID ? `/serah-terima?id=${form.ID}` : "";
+  const sharePath = form.ID
+    ? `/serah-terima?id=${form.ID}&token=${form.VerificationToken || ""}`
+    : "";
 
   function getShareUrl() {
-    return `${window.location.origin}/serah-terima?id=${form.ID}`;
+    return `${window.location.origin}${sharePath}`;
+  }
+
+  async function printDocument() {
+    if (!form.ID) {
+      toast.error("Simpan dokumen terlebih dahulu sebelum mencetak");
+      return;
+    }
+    setPrinting(true);
+    try {
+      const { printHandoverDocument } = await import(
+        "@/lib/handover-pdf"
+      );
+      await printHandoverDocument(form, getShareUrl());
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "PDF gagal dibuat");
+    } finally {
+      setPrinting(false);
+    }
   }
 
   function getWhatsAppMessage() {
@@ -444,27 +496,51 @@ function OnlineHandoverContent() {
 
   return (
     <main className="min-h-dvh bg-slate-50 pb-10 text-zinc-950 dark:bg-zinc-950 dark:text-white">
-      <header className="bg-[#0f172a] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-6">
-        <div className="mx-auto max-w-7xl">
+      <header className="sticky top-0 z-40 bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white shadow-lg shadow-slate-950/10 sm:px-6">
+        <div className="mx-auto max-w-[1600px]">
           <div className="flex items-center justify-between">
             <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
               <ArrowLeft size={15} /> Kembali ke stok
             </Link>
-            <Link
-              href="/rumah-sakit"
-              className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-[10px] font-bold"
-            >
-              Stock RS
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!form.ID || printing}
+                onClick={() => void printDocument()}
+                className="hidden h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[10px] font-bold disabled:opacity-40 sm:inline-flex"
+              >
+                {printing ? <LoaderCircle size={15} className="animate-spin" /> : <Printer size={15} />}
+                Cetak PDF
+              </button>
+              <button
+                type="button"
+                disabled={saving || form.Status !== "DRAFT"}
+                onClick={() => void persist("DRAFT")}
+                className="hidden h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-[10px] font-black shadow-lg shadow-blue-950/20 disabled:opacity-40 sm:inline-flex"
+              >
+                {saving ? <LoaderCircle size={15} className="animate-spin" /> : <Save size={15} />}
+                Simpan Dokumen
+              </button>
+              <Link
+                href="/rumah-sakit"
+                className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-[10px] font-bold"
+              >
+                Stock RS
+              </Link>
+            </div>
           </div>
           <div className="mt-4 flex items-center gap-3">
             <span className="flex size-11 items-center justify-center rounded-xl bg-white/10">
               <ClipboardSignature size={21} />
             </span>
-            <div>
+            <div className="min-w-0 flex-1">
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">Dokumen digital</p>
               <h1 className="text-xl font-black">Serah Terima Online</h1>
+              <p className="mt-1 truncate text-[10px] text-slate-400">
+                {form.ID || "Dokumen baru"}
+              </p>
             </div>
+            <DocumentStatusBadge status={form.Status} />
           </div>
         </div>
       </header>
@@ -472,27 +548,28 @@ function OnlineHandoverContent() {
       {loading ? (
         <div className="flex justify-center py-20"><LoaderCircle className="animate-spin text-blue-600" /></div>
       ) : (
-        <div className="mx-auto grid max-w-7xl gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[1fr_280px]">
-          <div className="space-y-4">
+        <div className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[260px_minmax(0,1fr)]">
+          <div className="order-1 min-w-0 space-y-4 xl:order-2">
             <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
                 {PROCEDURES.map((procedure) => (
                   <button
                     key={procedure}
                     type="button"
                     disabled={Boolean(form.ID)}
                     onClick={() => changeProcedure(procedure)}
-                    className={`rounded-xl border px-3 py-3 text-xs font-black ${
+                    className={`h-10 rounded-lg px-3 text-xs font-black transition ${
                       form.Procedure === procedure
-                        ? "border-blue-600 bg-blue-600 text-white"
-                        : "bg-slate-50 dark:bg-zinc-800"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "text-zinc-500 hover:bg-white dark:hover:bg-zinc-700"
                     }`}
                   >
                     {procedure}
                   </button>
                 ))}
               </div>
-              <div className="mt-3">
+              <div className="mt-3 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)] lg:items-end">
+                <div>
                 <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">
                   Brand implant
                 </p>
@@ -515,8 +592,8 @@ function OnlineHandoverContent() {
                     </button>
                   ))}
                 </div>
-              </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <TextField label="Hospital" value={form.Hospital} onChange={(Hospital) => setForm({ ...form, Hospital })} />
                 <TextField label="Surgeon / Dokter" value={form.Surgeon} onChange={(Surgeon) => setForm({ ...form, Surgeon })} />
                 <TextField label="Approved by" value={form.ApprovedBy} onChange={(ApprovedBy) => setForm({ ...form, ApprovedBy })} />
@@ -529,15 +606,28 @@ function OnlineHandoverContent() {
                   </p>
                 </div>
               </div>
+              </div>
             </section>
 
+            <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.8fr)]">
+              <div className="min-w-0 space-y-4">
             <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
               <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
                 <div>
-                  <h2 className="text-sm font-black">Checklist Implant {form.Procedure}</h2>
+                  <button
+                    type="button"
+                    onClick={() => setMobileItemsOpen((current) => !current)}
+                    className="flex w-full items-center gap-2 text-left sm:pointer-events-none"
+                  >
+                    <h2 className="text-sm font-black">Checklist Implant {form.Procedure}</h2>
+                    <ChevronDown
+                      size={16}
+                      className={`ml-auto transition sm:hidden ${mobileItemsOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
                   <p className="text-[10px] text-zinc-500">{selectedItems.length} dipilih · {issuedTotal} pcs dikeluarkan</p>
                 </div>
-                <div className="grid w-full grid-cols-[auto_auto_1fr] gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
+                <div className={`${mobileItemsOpen ? "grid" : "hidden"} w-full grid-cols-[auto_auto_1fr] gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-end`}>
                   <button
                     type="button"
                     onClick={() =>
@@ -587,7 +677,7 @@ function OnlineHandoverContent() {
                 </div>
               </div>
 
-              <div className="space-y-2 p-2 sm:hidden">
+              <div className={`${mobileItemsOpen ? "space-y-2 p-2" : "hidden"} sm:hidden`}>
                 {renderedItems.map(({ item, index }) => (
                   <HandoverItemCard
                     key={`${item.partNumber}-${item.batch}-${index}`}
@@ -648,10 +738,24 @@ function OnlineHandoverContent() {
               disabled={form.Status === "DITERIMA"}
               onChange={(Instruments) => setForm({ ...form, Instruments })}
             />
+              </div>
 
+              <div className="min-w-0 space-y-4 lg:sticky lg:top-28">
             <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
-              <h2 className="text-sm font-black">Pihak Serah Terima</h2>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-black">Pihak Serah Terima</h2>
+                  <p className="mt-0.5 text-[9px] text-zinc-500">
+                    Identitas dan tanda tangan tersimpan dalam audit dokumen.
+                  </p>
+                </div>
+                {localSavedAt && form.Status === "DRAFT" && (
+                  <span className="rounded-full bg-emerald-50 px-2 py-1 text-[8px] font-bold text-emerald-700">
+                    Draft lokal tersimpan
+                  </span>
+                )}
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <TextField label="Pengirim" value={form.Sender} onChange={(Sender) => setForm({ ...form, Sender })} />
                 <TextField label="Checker I" value={form.Checker1} onChange={(Checker1) => setForm({ ...form, Checker1 })} />
                 <TextField label="Checker II" value={form.Checker2} onChange={(Checker2) => setForm({ ...form, Checker2 })} />
@@ -659,14 +763,22 @@ function OnlineHandoverContent() {
                 <TextField label="Penerima" value={form.Receiver} onChange={(Receiver) => setForm({ ...form, Receiver })} />
                 <TextField label="Catatan penerimaan" value={form.AcceptanceNote} onChange={(AcceptanceNote) => setForm({ ...form, AcceptanceNote })} />
               </div>
-              <div className="mt-4 grid gap-3 border-t pt-4 lg:grid-cols-2">
+              <div className="mt-4 grid gap-4 border-t pt-4">
                 <SignaturePad
                   label="Tanda tangan pengirim"
                   name={form.Sender || "Pengirim"}
                   value={form.SenderSignature || ""}
                   disabled={form.Status !== "DRAFT"}
                   onChange={(SenderSignature) =>
-                    setForm({ ...form, SenderSignature })
+                    setForm({
+                      ...form,
+                      SenderSignature,
+                      SenderSignatureMeta: signatureAudit(
+                        form.Sender,
+                        form.SenderSignatureMeta,
+                        SenderSignature
+                      ),
+                    })
                   }
                 />
                 <SignaturePad
@@ -675,24 +787,41 @@ function OnlineHandoverContent() {
                   value={form.ReceiverSignature || ""}
                   disabled={form.Status !== "DIKIRIM"}
                   onChange={(ReceiverSignature) =>
-                    setForm({ ...form, ReceiverSignature })
+                    setForm({
+                      ...form,
+                      ReceiverSignature,
+                      ReceiverSignatureMeta: signatureAudit(
+                        form.Receiver,
+                        form.ReceiverSignatureMeta,
+                        ReceiverSignature
+                      ),
+                    })
                   }
                 />
               </div>
             </section>
 
+            <HandoverActivityTimeline handover={form} />
+              </div>
+            </div>
+
             <div className="sticky bottom-0 z-30 -mx-3 grid grid-cols-3 gap-1.5 border-t bg-slate-50/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur dark:bg-zinc-950/95 sm:static sm:mx-0 sm:gap-2 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none">
-              <button disabled={saving || form.Status === "DITERIMA"} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
-              <button disabled={saving || form.Status === "DITERIMA"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">Kirim ke penerima</span></button>
+              <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
+              <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">Kirim ke penerima</span></button>
               <button disabled={saving || form.Status !== "DIKIRIM"} onClick={() => void accept()} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><PackageCheck size={15} /> <span className="sm:hidden">Terima</span><span className="hidden sm:inline">Terima & setujui</span></button>
             </div>
 
             {sharePath && form.Status !== "DRAFT" && (
-              <button type="button" onClick={() => setShareModalOpen(true)} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-bold text-white"><MessageCircle size={16} /> Buka link & bagikan ke WhatsApp</button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={() => setShareModalOpen(true)} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-bold text-white"><MessageCircle size={16} /> Buka link & bagikan ke WhatsApp</button>
+                <button type="button" disabled={printing} onClick={() => void printDocument()} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border bg-white text-xs font-bold text-slate-800 disabled:opacity-50 dark:bg-zinc-900 dark:text-white">
+                  {printing ? <LoaderCircle size={16} className="animate-spin" /> : <Printer size={16} />} Cetak Berita Acara (PDF)
+                </button>
+              </div>
             )}
           </div>
 
-          <aside className="h-fit rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 xl:sticky xl:top-4">
+          <aside className="order-2 h-fit rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 xl:order-1 xl:sticky xl:top-28">
             <div className="flex items-center justify-between px-1">
               <div>
                 <h2 className="text-sm font-black">Dokumen Terbaru</h2>
@@ -1038,7 +1167,8 @@ function normalizeDateInput(value: string | undefined) {
 }
 
 function HandoverItemRow({ item, onChange }: { item: HandoverItem; onChange: (item: HandoverItem) => void }) {
-  return <tr className={`border-t ${item.qtyChecked <= 0 ? "bg-red-50 text-red-800 dark:bg-red-950/20 dark:text-red-200" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={item.qtyChecked <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{item.qtyChecked <= 0 && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">STOK HABIS</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || item.qtyChecked <= 0} value={item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && item.qtyChecked === 0 ? "border-red-400 bg-red-100 text-red-700 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
+  const stockWarning = item.qtyChecked < item.stdQty;
+  return <tr className={`border-t ${stockWarning ? "bg-[#FEF2F2] text-red-900 outline outline-1 -outline-offset-1 outline-red-300 dark:bg-red-950/25 dark:text-red-100 dark:outline-red-800" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={item.qtyChecked <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{stockWarning && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">{item.qtyChecked <= 0 ? "STOK HABIS" : "STOK KURANG"}</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || item.qtyChecked <= 0} value={item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && stockWarning ? "border-red-500 bg-red-100 text-red-700 ring-2 ring-red-200 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
 }
 
 function HandoverItemCard({
@@ -1057,8 +1187,8 @@ function HandoverItemCard({
   return (
     <article
       className={`overflow-hidden rounded-xl border ${
-        item.qtyChecked <= 0
-          ? "border-red-400 bg-red-50 shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none"
+        item.qtyChecked < item.stdQty
+          ? "border-2 border-red-400 bg-[#FEF2F2] shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none"
           : item.selected
           ? "border-blue-200 bg-white dark:border-blue-900 dark:bg-zinc-900"
           : "bg-slate-50 opacity-55 dark:bg-zinc-900"
@@ -1133,8 +1263,8 @@ function HandoverItemCard({
                 )
               }
               className={`mt-1 h-9 w-full rounded-lg border bg-white px-1 text-center text-sm font-black disabled:bg-slate-100 disabled:text-zinc-500 dark:bg-zinc-950 dark:disabled:bg-zinc-800 ${
-                field === "qtyChecked" && item.qtyChecked === 0
-                  ? "border-red-300 text-red-600"
+                field === "qtyChecked" && item.qtyChecked < item.stdQty
+                  ? "border-red-500 bg-red-50 text-red-700 ring-2 ring-red-100"
                   : ""
               }`}
             />
@@ -1733,6 +1863,108 @@ function StatusBadge({ status }: { status: OnlineHandover["Status"] }) {
   return <span className={`rounded-full px-2 py-1 text-[8px] font-black ${style}`}>{status}</span>;
 }
 
+function DocumentStatusBadge({
+  status,
+}: {
+  status: OnlineHandover["Status"];
+}) {
+  const config =
+    status === "DITERIMA"
+      ? {
+          label: "Selesai",
+          className: "border-emerald-400/30 bg-emerald-400/15 text-emerald-200",
+        }
+      : status === "DIKIRIM"
+        ? {
+            label: "Menunggu tanda tangan",
+            className: "border-amber-300/30 bg-amber-300/15 text-amber-100",
+          }
+        : {
+            label: "Draft",
+            className: "border-slate-300/25 bg-white/10 text-slate-200",
+          };
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-3 py-1.5 text-[9px] font-black uppercase tracking-wide ${config.className}`}
+    >
+      {config.label}
+    </span>
+  );
+}
+
+function HandoverActivityTimeline({
+  handover,
+}: {
+  handover: OnlineHandover;
+}) {
+  const events = [
+    handover.CreatedAt && {
+      label: "Draft dibuat",
+      by: handover.By || handover.Sender || "Sistem",
+      time: handover.CreatedAt,
+    },
+    handover.UpdatedAt &&
+      handover.UpdatedAt !== handover.CreatedAt && {
+        label: "Dokumen diperbarui",
+        by: handover.By || handover.Sender || "Sistem",
+        time: handover.UpdatedAt,
+      },
+    handover.SenderSignatureMeta?.signedAt && {
+      label: "Ditandatangani pengirim",
+      by: handover.SenderSignatureMeta.fullName || handover.Sender,
+      time: handover.SenderSignatureMeta.signedAt,
+    },
+    handover.SentAt && {
+      label: "Dikirim ke penerima",
+      by: handover.Sender || "Logistik",
+      time: handover.SentAt,
+    },
+    handover.ReceiverSignatureMeta?.signedAt && {
+      label: "Ditandatangani penerima",
+      by: handover.ReceiverSignatureMeta.fullName || handover.Receiver,
+      time: handover.ReceiverSignatureMeta.signedAt,
+    },
+    handover.AcceptedAt && {
+      label: "Serah terima selesai",
+      by: handover.Receiver || "Penerima",
+      time: handover.AcceptedAt,
+    },
+  ].filter(Boolean) as Array<{ label: string; by: string; time: string }>;
+
+  return (
+    <section className="rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
+      <div className="flex items-center gap-2">
+        <Clock3 size={16} className="text-blue-600" />
+        <h2 className="text-sm font-black">Riwayat Aktivitas</h2>
+      </div>
+      {events.length ? (
+        <ol className="mt-4 space-y-0">
+          {events.map((event, index) => (
+            <li key={`${event.label}-${event.time}`} className="flex gap-3">
+              <div className="flex flex-col items-center">
+                <span className="mt-1 size-2.5 rounded-full bg-blue-600 ring-4 ring-blue-50 dark:ring-blue-950" />
+                {index < events.length - 1 && (
+                  <span className="min-h-10 w-px flex-1 bg-slate-200 dark:bg-zinc-700" />
+                )}
+              </div>
+              <div className="pb-4">
+                <p className="text-xs font-black">{event.label}</p>
+                <p className="mt-0.5 text-[9px] text-zinc-500">
+                  {event.by || "-"} · {formatDateTime(event.time)}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="mt-3 rounded-xl border border-dashed p-4 text-center text-[10px] text-zinc-500">
+          Aktivitas akan tercatat setelah draft disimpan.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function DocumentSummaryCard({
   document,
   active,
@@ -1914,15 +2146,15 @@ function SignaturePad({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border bg-slate-50 dark:bg-zinc-800">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
       <div className="flex items-center justify-between border-b px-3 py-2">
         <div>
           <p className="text-[10px] font-black uppercase text-zinc-500">{label}</p>
           <p className="text-xs font-bold">{name}</p>
         </div>
         {!disabled && (
-          <button type="button" onClick={clear} className="inline-flex h-8 items-center gap-1 rounded-lg border bg-white px-2 text-[10px] font-bold text-zinc-600">
-            <Eraser size={13} /> Hapus
+          <button type="button" onClick={clear} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-[10px] font-bold text-red-600 shadow-sm hover:bg-red-50">
+            <Eraser size={14} /> Reset
           </button>
         )}
       </div>
@@ -1934,11 +2166,15 @@ function SignaturePad({
         onPointerMove={move}
         onPointerUp={finish}
         onPointerCancel={finish}
-        className={`h-40 w-full bg-white touch-none ${disabled ? "cursor-default" : "cursor-crosshair"}`}
+        className={`h-44 min-h-[176px] w-full bg-white touch-none ${disabled ? "cursor-default" : "cursor-crosshair"}`}
         aria-label={label}
       />
       <p className="px-3 py-2 text-[9px] text-zinc-500">
-        {value ? "Tanda tangan tersimpan" : "Gunakan jari atau mouse pada area putih"}
+        {value
+          ? disabled
+            ? "Tanda tangan tersimpan dan sudah dikunci"
+            : "Tanda tangan siap disimpan"
+          : "Gunakan jari atau mouse pada area putih"}
       </p>
     </div>
   );
@@ -1946,6 +2182,65 @@ function SignaturePad({
 
 function updateItem(setForm: React.Dispatch<React.SetStateAction<OnlineHandover>>, index: number, item: HandoverItem) {
   setForm((current) => ({ ...current, Items: current.Items.map((value, itemIndex) => itemIndex === index ? item : value) }));
+}
+
+function emptyAudit(fullName = ""): HandoverSignatureAudit {
+  return {
+    fullName,
+    employeeId: "",
+    position: "",
+  };
+}
+
+function getDeviceId() {
+  if (typeof window === "undefined") return "";
+  const key = "implant-device-id-v1";
+  let value = localStorage.getItem(key);
+  if (!value) {
+    value = crypto.randomUUID();
+    localStorage.setItem(key, value);
+  }
+  return value;
+}
+
+function signatureAudit(
+  fullName: string,
+  current: HandoverSignatureAudit | undefined,
+  signature: string
+): HandoverSignatureAudit {
+  return {
+    ...emptyAudit(fullName),
+    ...current,
+    fullName,
+    signedAt: signature ? new Date().toISOString() : undefined,
+    deviceId: signature ? getDeviceId() : current?.deviceId,
+    userAgent:
+      signature && typeof navigator !== "undefined"
+        ? navigator.userAgent
+        : current?.userAgent,
+  };
+}
+
+function createVerificationToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 20);
+}
+
+function readLocalHandoverDraft(): OnlineHandover | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("implant-handover-autosave-v1");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as OnlineHandover;
+    if (!parsed || parsed.Status !== "DRAFT" || !Array.isArray(parsed.Items)) {
+      return null;
+    }
+    return normalizeHandoverDocument(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function emptyHandover(procedure: HandoverProcedure, brand: HandoverBrand = "NORMMED"): OnlineHandover {

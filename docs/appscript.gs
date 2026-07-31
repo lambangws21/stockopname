@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 28;
+const APP_VERSION = 30;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -94,6 +94,9 @@ const HANDOVER_HEADERS = [
   "ReceiverSignature",
   "InventoryPostedAt",
   "HospitalUpdatedAt",
+  "SenderSignatureMetaJson",
+  "ReceiverSignatureMetaJson",
+  "VerificationToken",
 ];
 const CUSTOMER_HISTORY_HEADERS = [
   "Timestamp",
@@ -540,8 +543,24 @@ function listHandovers(params) {
       } catch (err) {
         item.Instruments = [];
       }
+      try {
+        item.SenderSignatureMeta = JSON.parse(
+          String(item.SenderSignatureMetaJson || "{}")
+        );
+      } catch (err) {
+        item.SenderSignatureMeta = {};
+      }
+      try {
+        item.ReceiverSignatureMeta = JSON.parse(
+          String(item.ReceiverSignatureMetaJson || "{}")
+        );
+      } catch (err) {
+        item.ReceiverSignatureMeta = {};
+      }
       delete item.ItemsJson;
       delete item.InstrumentsJson;
+      delete item.SenderSignatureMetaJson;
+      delete item.ReceiverSignatureMetaJson;
       // Daftar dokumen dipakai dashboard dan tidak perlu membawa data gambar
       // tanda tangan yang besar. Detail lengkap hanya dikirim saat id diminta.
       if (!targetId) {
@@ -855,9 +874,18 @@ function saveHandover(payload, skipLock) {
   const previous = rowNumber ? rows[rowNumber - 1] : [];
   const previousStatus = String(previous[17] || "").toUpperCase();
   const requestedStatus = String(payload.Status || "DRAFT").toUpperCase();
-  const status = ["DRAFT", "DIKIRIM", "DITERIMA"].indexOf(requestedStatus) >= 0
+  let status = ["DRAFT", "DIKIRIM", "DITERIMA"].indexOf(requestedStatus) >= 0
     ? requestedStatus
     : "DRAFT";
+  // Status dan tanda tangan bersifat maju-saja. Dokumen yang sudah dikirim
+  // tidak boleh kembali menjadi draft, dan dokumen selesai tidak dapat dibuka
+  // kembali melalui request yang dimanipulasi.
+  if (previousStatus === "DIKIRIM" && status === "DRAFT") {
+    status = "DIKIRIM";
+  }
+  if (previousStatus === "DITERIMA") {
+    status = "DITERIMA";
+  }
   let inventoryPostedAt = previous[24] || "";
   let preparedItems = Array.isArray(payload.Items) ? payload.Items : [];
   if (status === "DIKIRIM" && !inventoryPostedAt) {
@@ -906,6 +934,13 @@ function saveHandover(payload, skipLock) {
       : payload.ReceiverSignature || previous[23] || "",
     inventoryPostedAt,
     payload.HospitalUpdatedAt || previous[25] || "",
+    previousStatus === "DIKIRIM" || previousStatus === "DITERIMA"
+      ? previous[26] || "{}"
+      : JSON.stringify(payload.SenderSignatureMeta || {}),
+    previousStatus === "DITERIMA"
+      ? previous[27] || "{}"
+      : JSON.stringify(payload.ReceiverSignatureMeta || {}),
+    payload.VerificationToken || previous[28] || "",
   ];
   if (rowNumber) {
     sheet.getRange(rowNumber, 1, 1, HANDOVER_HEADERS.length).setValues([values]);
@@ -935,6 +970,12 @@ function acceptHandover(payload) {
   current.AcceptanceNote = payload.AcceptanceNote || "";
   current.ReceiverSignature =
     payload.ReceiverSignature || current.ReceiverSignature || "";
+  current.ReceiverSignatureMeta =
+    payload.ReceiverSignatureMeta || current.ReceiverSignatureMeta || {};
+  current.SenderSignatureMeta =
+    payload.SenderSignatureMeta || current.SenderSignatureMeta || {};
+  current.VerificationToken =
+    payload.VerificationToken || current.VerificationToken || "";
   current.SenderSignature =
     payload.SenderSignature || current.SenderSignature || "";
   current.ReceiverSignature =

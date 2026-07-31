@@ -30,6 +30,16 @@ export interface HandoverInstrument {
   note?: string;
 }
 
+export interface HandoverSignatureAudit {
+  fullName: string;
+  employeeId: string;
+  position: string;
+  signedAt?: string;
+  ipAddress?: string;
+  deviceId?: string;
+  userAgent?: string;
+}
+
 export interface OnlineHandover {
   Row?: number;
   ID?: string;
@@ -55,6 +65,9 @@ export interface OnlineHandover {
   AcceptanceNote: string;
   SenderSignature?: string;
   ReceiverSignature?: string;
+  SenderSignatureMeta?: HandoverSignatureAudit;
+  ReceiverSignatureMeta?: HandoverSignatureAudit;
+  VerificationToken?: string;
   InventoryPostedAt?: string;
   HospitalUpdatedAt?: string;
   By?: string;
