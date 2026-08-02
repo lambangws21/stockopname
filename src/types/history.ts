@@ -7,6 +7,8 @@ export interface HistoryRow {
   No: number;
   Changes: string;
   By: string;
+  TransactionId?: string;
+  TransactionSize?: number;
 }
 
   export interface HistoryResponse {

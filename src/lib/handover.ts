@@ -63,6 +63,32 @@ export async function settleOnlineHandover(
   return json;
 }
 
+export async function appendOnlineHandoverSupplement(payload: {
+  ID: string;
+  Items: OnlineHandover["Items"];
+  Instruments: OnlineHandover["Instruments"];
+  by?: string;
+  requestId: string;
+}) {
+  const response = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "handoverSupplement",
+      ...payload,
+    }),
+  });
+  const json = (await response.json()) as {
+    status: "success" | "error";
+    message?: string;
+    data?: OnlineHandover;
+  };
+  if (!response.ok || json.status === "error") {
+    throw new Error(json.message || "Kiriman tambahan gagal disimpan");
+  }
+  return json;
+}
+
 export async function deleteOnlineHandovers(ids: string[]) {
   const response = await fetch(API, {
     method: "POST",

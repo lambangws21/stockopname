@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 35;
+const APP_VERSION = 38;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -30,6 +30,17 @@ const BRAND_OPTIONS = ["ZIMMER", "NORMMED"];
 
 const ADMIN_EMAILS = ["lambangws21@gmail.com"];
 const BACKUP_FOLDER_ID = "1_y8hc--3PdA-_t07lW1p_TO7VDuSky47";
+const MONTHLY_BACKUP_HANDLER = "autoBackupMonthly";
+const BACKUP_LOG_SHEET = "BackupLog";
+const BACKUP_LOG_HEADERS = [
+  "CreatedAt",
+  "Period",
+  "FileName",
+  "FileId",
+  "BackupUrl",
+  "Status",
+  "Source",
+];
 const EXTERNAL_SOURCE_URL_DEFAULT =
   "https://docs.google.com/spreadsheets/d/1vGg0gPbaedxuVbvQhXy4oh9sX34RYHF-B3SJySuORkw/edit?gid=136121031#gid=136121031";
 const EXTERNAL_SOURCE_GID_DEFAULT = "136121031";
@@ -494,6 +505,16 @@ function setupApplicationSheets() {
   handoverSheet.getRange("I:I").setNumberFormat("yyyy-mm-dd");
   handoverSheet.getRange("S:T").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   handoverSheet.getRange("Y:Z").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  const backupLogSheet = getOrCreateSheet(BACKUP_LOG_SHEET);
+  ensureHeaderRow(backupLogSheet, BACKUP_LOG_HEADERS);
+  backupLogSheet
+    .getRange(1, 1, 1, BACKUP_LOG_HEADERS.length)
+    .setValues([BACKUP_LOG_HEADERS])
+    .setBackground("#1d4ed8")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold");
+  backupLogSheet.setFrozenRows(1);
+  backupLogSheet.getRange("A:A").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   syncStockWarnings();
 
   return {
@@ -510,6 +531,7 @@ function setupApplicationSheets() {
       customerHistorySheet.getName(),
       customerUsageSheet.getName(),
       handoverSheet.getName(),
+      backupLogSheet.getName(),
     ],
   };
 }
@@ -599,7 +621,7 @@ function resolveHandoverStockRow(stockRows, item) {
   return 0;
 }
 
-function buildHistoryBatchRow(entry) {
+function buildHistoryBatchItem(entry) {
   const before = entry.before || {};
   const after = entry.after || {};
   const fields = {};
@@ -620,27 +642,63 @@ function buildHistoryBatchRow(entry) {
     }
   });
   if (!changes.length) return null;
-  return [
-    new Date(),
-    entry.action,
-    entry.sheetName || DEFAULT_SHEET,
-    safeNumber(entry.no),
-    JSON.stringify(changes),
-    entry.by || Session.getActiveUser().getEmail() || "",
-  ];
+  return {
+    action: entry.action,
+    sheet: entry.sheetName || DEFAULT_SHEET,
+    no: safeNumber(entry.no),
+    changes: changes,
+    by: entry.by || Session.getActiveUser().getEmail() || "",
+  };
 }
 
 function appendHistoryBatch(entries) {
-  const values = (entries || [])
-    .map(buildHistoryBatchRow)
-    .filter(function (row) {
-      return Boolean(row);
+  const items = (entries || [])
+    .map(buildHistoryBatchItem)
+    .filter(function (item) {
+      return Boolean(item);
     });
-  if (!values.length) return;
+  if (!items.length) return;
+
+  // Satu transaksi hanya memakai satu baris fisik di Google Sheet. Seluruh
+  // perubahan item disimpan sebagai JSON dan diuraikan kembali oleh getHistory.
+  const actions = items
+    .map(function (item) {
+      return String(item.action || "");
+    })
+    .filter(function (action, index, values) {
+      return action && values.indexOf(action) === index;
+    });
+  const actors = items
+    .map(function (item) {
+      return String(item.by || "");
+    })
+    .filter(function (actor, index, values) {
+      return actor && values.indexOf(actor) === index;
+    });
+  const sheets = items
+    .map(function (item) {
+      return String(item.sheet || DEFAULT_SHEET);
+    })
+    .filter(function (name, index, values) {
+      return values.indexOf(name) === index;
+    });
+  const payload = {
+    version: 2,
+    type: "stock_history_batch",
+    transactionId:
+      "HIST-" + new Date().getTime() + "-" + Math.floor(Math.random() * 10000),
+    itemCount: items.length,
+    items: items,
+  };
   const sheet = getSheet("History");
-  sheet
-    .getRange(sheet.getLastRow() + 1, 1, values.length, STOCK_HISTORY_HEADERS.length)
-    .setValues(values);
+  sheet.appendRow([
+    new Date(),
+    actions.length === 1 ? actions[0] : "TRANSAKSI_STOCK",
+    sheets.length === 1 ? sheets[0] : DEFAULT_SHEET,
+    items.length === 1 ? items[0].no : 0,
+    JSON.stringify(payload),
+    actors.join(", "),
+  ]);
 }
 
 function updateWarningsBatch(entries) {
@@ -985,6 +1043,174 @@ function acceptHandover(payload) {
     ? payload.Instruments
     : current.Instruments;
   return saveHandover(current);
+}
+
+function handoverItemMergeKey(item) {
+  const stockRow = safeNumber(item && item.stockRow);
+  if (stockRow > 0) return "ROW:" + stockRow;
+  return [
+    "ITEM",
+    String((item && item.partNumber) || "").trim(),
+    String((item && item.batch) || "").trim(),
+  ].join(":");
+}
+
+function appendHandoverSupplement(payload) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { status: "error", message: "Kiriman tambahan sedang diproses" };
+  }
+  try {
+    const id = String(payload.ID || "").trim();
+    if (!id) throw new Error("ID dokumen serah terima wajib diisi");
+    const current = listHandovers({ id: id }).data[0];
+    if (!current) throw new Error("Dokumen serah terima tidak ditemukan");
+    if (["DIKIRIM", "DITERIMA"].indexOf(String(current.Status)) < 0) {
+      throw new Error("Kiriman tambahan hanya untuk dokumen yang sudah dikirim");
+    }
+    const requestId = String(payload.requestId || "").trim();
+    if (!requestId) throw new Error("Kode transaksi kiriman tambahan tidak tersedia");
+    const alreadyProcessed = (Array.isArray(current.Items) ? current.Items : [])
+      .concat(Array.isArray(current.Instruments) ? current.Instruments : [])
+      .some(function (item) {
+        return (
+          Array.isArray(item.supplementRequestIds) &&
+          item.supplementRequestIds.indexOf(requestId) >= 0
+        );
+      });
+    if (alreadyProcessed) {
+      return { status: "success", ID: current.ID, data: current };
+    }
+
+    const requestedItems = (Array.isArray(payload.Items) ? payload.Items : [])
+      .filter(function (item) {
+        return item.selected && safeNumber(item.qtyIssued) > 0;
+      });
+    const requestedInstruments = (Array.isArray(payload.Instruments)
+      ? payload.Instruments
+      : []
+    ).filter(function (item) {
+      return item.selected && safeNumber(item.qty) > 0;
+    });
+    if (!requestedItems.length && !requestedInstruments.length) {
+      throw new Error("Pilih minimal satu implant atau instrument tambahan");
+    }
+
+    const preparedSupplement = requestedItems.length
+      ? dispatchHandoverInventory({
+          ID: current.ID,
+          Hospital: current.Hospital,
+          Sender: payload.by || current.Sender || "Logistik",
+          by: payload.by || current.Sender || "Logistik",
+          Items: requestedItems,
+        })
+      : [];
+    const mergedItems = (Array.isArray(current.Items) ? current.Items : []).map(
+      function (item) {
+        return Object.assign({}, item);
+      }
+    );
+    const itemIndex = {};
+    mergedItems.forEach(function (item, index) {
+      itemIndex[handoverItemMergeKey(item)] = index;
+    });
+    preparedSupplement.forEach(function (item) {
+      const key = handoverItemMergeKey(item);
+      const index = itemIndex[key];
+      if (index === undefined) {
+        itemIndex[key] = mergedItems.length;
+        mergedItems.push(
+          Object.assign({}, item, { supplementRequestIds: [requestId] })
+        );
+        return;
+      }
+      const existing = mergedItems[index];
+      const addedQty = safeNumber(item.qtyIssued);
+      const supplementRequestIds = Array.isArray(existing.supplementRequestIds)
+        ? existing.supplementRequestIds.slice()
+        : [];
+      supplementRequestIds.push(requestId);
+      mergedItems[index] = Object.assign({}, existing, {
+        selected: true,
+        qtyIssued: safeNumber(existing.qtyIssued) + addedQty,
+        qtyChecked: Math.max(
+          safeNumber(existing.qtyChecked),
+          safeNumber(item.qtyChecked)
+        ),
+        hospitalQty: safeNumber(existing.hospitalQty) + addedQty,
+        hospitalRemaining:
+          safeNumber(existing.hospitalQty) +
+          addedQty -
+          safeNumber(existing.usedQty) -
+          safeNumber(existing.returnedQty),
+        officeAfter: item.officeAfter,
+        locationStatus: "DI RUMAH SAKIT",
+        supplementRequestIds: supplementRequestIds,
+      });
+    });
+
+    const mergedInstruments = (Array.isArray(current.Instruments)
+      ? current.Instruments
+      : []
+    ).map(function (item) {
+      return Object.assign({}, item);
+    });
+    const instrumentIndex = {};
+    mergedInstruments.forEach(function (item, index) {
+      instrumentIndex[String(item.code || item.name || "").trim()] = index;
+    });
+    requestedInstruments.forEach(function (item) {
+      const key = String(item.code || item.name || "").trim();
+      const index = instrumentIndex[key];
+      if (index === undefined) {
+        instrumentIndex[key] = mergedInstruments.length;
+        mergedInstruments.push(
+          Object.assign({}, item, {
+            selected: true,
+            supplementRequestIds: [requestId],
+          })
+        );
+      } else {
+        const instrumentRequestIds = Array.isArray(
+          mergedInstruments[index].supplementRequestIds
+        )
+          ? mergedInstruments[index].supplementRequestIds.slice()
+          : [];
+        instrumentRequestIds.push(requestId);
+        mergedInstruments[index] = Object.assign({}, mergedInstruments[index], {
+          selected: true,
+          qty:
+            safeNumber(mergedInstruments[index].qty) + safeNumber(item.qty),
+          supplementRequestIds: instrumentRequestIds,
+        });
+      }
+    });
+
+    current.Items = mergedItems;
+    current.Instruments = mergedInstruments;
+    current.HospitalUpdatedAt = new Date();
+    current.By = payload.by || current.Sender || "Logistik";
+    current.AcceptanceNote = [
+      String(current.AcceptanceNote || "").trim(),
+      "Kiriman tambahan " +
+        Utilities.formatDate(
+          new Date(),
+          Session.getScriptTimeZone(),
+          "yyyy-MM-dd HH:mm"
+        ) +
+        " • " +
+        preparedSupplement.length +
+        " item implant",
+    ]
+      .filter(function (note) {
+        return Boolean(note);
+      })
+      .join("\n");
+    current._allowPostedItems = true;
+    return saveHandover(current, true);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function deleteHandovers(payload) {
@@ -1717,31 +1943,66 @@ function getHistory(e) {
   const targetSheet = req.parameter.sheet || "";
   const targetNo = safeNumber(req.parameter.No);
 
-  const data = rows
-    .slice(1)
-    .map(function (r, index) {
-      return { values: r, rowNumber: index + 2 };
-    })
-    .filter(function (entry) {
-      const r = entry.values;
-      if (targetSheet && r[idx.Sheet] !== targetSheet) return false;
-      if (targetNo && safeNumber(r[idx.No]) !== targetNo) return false;
-      return true;
-    })
-    .map(function (entry) {
-      const r = entry.values;
-      return {
-        Row: entry.rowNumber,
-        Rows: [entry.rowNumber],
-        Timestamp: r[idx.Timestamp],
-        Action: r[idx.Action],
-        Sheet: r[idx.Sheet],
-        No: safeNumber(r[idx.No]),
-        Changes: r[idx.Changes] || "[]",
-        By: r[idx.By] || "",
-      };
-    })
-    .reverse();
+  const data = [];
+  rows.slice(1).forEach(function (r, index) {
+    const rowNumber = index + 2;
+    const rawChanges = r[idx.Changes] || "[]";
+    let groupedItems = [];
+    let transactionId = "";
+    let transactionSize = 0;
+    try {
+      const parsed = JSON.parse(rawChanges);
+      if (
+        parsed &&
+        parsed.type === "stock_history_batch" &&
+        Array.isArray(parsed.items)
+      ) {
+        groupedItems = parsed.items;
+        transactionId = parsed.transactionId || "";
+        transactionSize = safeNumber(parsed.itemCount) || groupedItems.length;
+      }
+    } catch (ignore) {
+      groupedItems = [];
+    }
+
+    if (groupedItems.length) {
+      groupedItems.forEach(function (item) {
+        const itemSheet = item.sheet || r[idx.Sheet] || DEFAULT_SHEET;
+        const itemNo = safeNumber(item.no);
+        if (targetSheet && itemSheet !== targetSheet) return;
+        if (targetNo && itemNo !== targetNo) return;
+        data.push({
+          Row: rowNumber,
+          Rows: [rowNumber],
+          Timestamp: r[idx.Timestamp],
+          Action: item.action || r[idx.Action],
+          Sheet: itemSheet,
+          No: itemNo,
+          Changes: JSON.stringify(item.changes || []),
+          By: item.by || r[idx.By] || "",
+          TransactionId: transactionId,
+          TransactionSize: transactionSize,
+        });
+      });
+      return;
+    }
+
+    if (targetSheet && r[idx.Sheet] !== targetSheet) return;
+    if (targetNo && safeNumber(r[idx.No]) !== targetNo) return;
+    data.push({
+      Row: rowNumber,
+      Rows: [rowNumber],
+      Timestamp: r[idx.Timestamp],
+      Action: r[idx.Action],
+      Sheet: r[idx.Sheet],
+      No: safeNumber(r[idx.No]),
+      Changes: rawChanges,
+      By: r[idx.By] || "",
+      TransactionId: "",
+      TransactionSize: 1,
+    });
+  });
+  data.reverse();
 
   return { status: "success", data: data };
 }
@@ -2040,6 +2301,164 @@ function autoBackupDaily() {
   );
   const copy = file.makeCopy("Backup_" + ss.getName() + "_" + timestamp, folder);
   return copy.getUrl();
+}
+
+function getMonthlyBackupPeriod(date) {
+  return Utilities.formatDate(
+    date || new Date(),
+    Session.getScriptTimeZone(),
+    "yyyy-MM"
+  );
+}
+
+function getBackupLogSheet() {
+  const sheet = getOrCreateSheet(BACKUP_LOG_SHEET);
+  ensureHeaderRow(sheet, BACKUP_LOG_HEADERS);
+  return sheet;
+}
+
+function findMonthlyBackup(folder, fileName) {
+  const files = folder.getFilesByName(fileName);
+  return files.hasNext() ? files.next() : null;
+}
+
+function autoBackupMonthly(force) {
+  if (!BACKUP_FOLDER_ID || BACKUP_FOLDER_ID === "YOUR_BACKUP_FOLDER_ID") {
+    throw new Error("BACKUP_FOLDER_ID belum diisi");
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return {
+      status: "busy",
+      message: "Backup bulanan lain sedang diproses",
+    };
+  }
+
+  try {
+    const now = new Date();
+    const period = getMonthlyBackupPeriod(now);
+    const ss = getApplicationSpreadsheet();
+    const folder = DriveApp.getFolderById(BACKUP_FOLDER_ID);
+    const fileName = "Backup_Bulanan_" + ss.getName() + "_" + period;
+    const properties = PropertiesService.getScriptProperties();
+    const propertyKey = "MONTHLY_BACKUP_" + period;
+    const savedFileId = properties.getProperty(propertyKey);
+    let existing = null;
+
+    if (!force && savedFileId) {
+      try {
+        existing = DriveApp.getFileById(savedFileId);
+      } catch (ignore) {
+        existing = null;
+      }
+    }
+    if (!force && !existing) existing = findMonthlyBackup(folder, fileName);
+
+    if (existing) {
+      properties.setProperty(propertyKey, existing.getId());
+      return {
+        status: "exists",
+        period: period,
+        fileId: existing.getId(),
+        fileName: existing.getName(),
+        backupUrl: existing.getUrl(),
+        message: "Backup bulan " + period + " sudah tersedia",
+      };
+    }
+
+    const sourceFile = DriveApp.getFileById(ss.getId());
+    const backupFile = sourceFile.makeCopy(fileName, folder);
+    properties.setProperty(propertyKey, backupFile.getId());
+    properties.setProperty("MONTHLY_BACKUP_LAST_PERIOD", period);
+    properties.setProperty("MONTHLY_BACKUP_LAST_AT", now.toISOString());
+    properties.setProperty("MONTHLY_BACKUP_LAST_FILE_ID", backupFile.getId());
+
+    getBackupLogSheet().appendRow([
+      now,
+      period,
+      backupFile.getName(),
+      backupFile.getId(),
+      backupFile.getUrl(),
+      "SUCCESS",
+      force ? "MANUAL" : "AUTO",
+    ]);
+
+    return {
+      status: "success",
+      period: period,
+      fileId: backupFile.getId(),
+      fileName: backupFile.getName(),
+      backupUrl: backupFile.getUrl(),
+      message: "Backup bulanan berhasil dibuat",
+    };
+  } catch (error) {
+    try {
+      getBackupLogSheet().appendRow([
+        new Date(),
+        getMonthlyBackupPeriod(new Date()),
+        "",
+        "",
+        "",
+        "FAILED: " + String(error && error.message ? error.message : error),
+        force ? "MANUAL" : "AUTO",
+      ]);
+    } catch (ignoreLog) {}
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function installMonthlyBackupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === MONTHLY_BACKUP_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  const trigger = ScriptApp.newTrigger(MONTHLY_BACKUP_HANDLER)
+    .timeBased()
+    .onMonthDay(1)
+    .atHour(2)
+    .inTimezone(Session.getScriptTimeZone())
+    .create();
+
+  PropertiesService.getScriptProperties().setProperty(
+    "MONTHLY_BACKUP_TRIGGER_ID",
+    trigger.getUniqueId()
+  );
+  return {
+    status: "success",
+    triggerId: trigger.getUniqueId(),
+    schedule: "Tanggal 1 setiap bulan, pukul 02:00",
+    timezone: Session.getScriptTimeZone(),
+    message: "Trigger backup bulanan berhasil diaktifkan",
+  };
+}
+
+function getMonthlyBackupStatus() {
+  const properties = PropertiesService.getScriptProperties();
+  const activeTrigger = ScriptApp.getProjectTriggers().some(function (trigger) {
+    return trigger.getHandlerFunction() === MONTHLY_BACKUP_HANDLER;
+  });
+  const lastFileId = properties.getProperty("MONTHLY_BACKUP_LAST_FILE_ID") || "";
+  let backupUrl = "";
+  if (lastFileId) {
+    try {
+      backupUrl = DriveApp.getFileById(lastFileId).getUrl();
+    } catch (ignore) {}
+  }
+  return {
+    status: "success",
+    enabled: activeTrigger,
+    schedule: "Tanggal 1 setiap bulan, pukul 02:00",
+    timezone: Session.getScriptTimeZone(),
+    lastPeriod: properties.getProperty("MONTHLY_BACKUP_LAST_PERIOD") || "",
+    lastBackupAt: properties.getProperty("MONTHLY_BACKUP_LAST_AT") || "",
+    lastFileId: lastFileId,
+    backupUrl: backupUrl,
+  };
 }
 
 function exportPdf(sheetName) {
@@ -2743,7 +3162,21 @@ function doGet(e) {
             "setupSheet",
           ],
           externalSheet: ["importExternal"],
-          reporting: ["backup", "pdf"],
+          handover: [
+            "handoverList",
+            "handoverSave",
+            "handoverAccept",
+            "handoverSettle",
+            "handoverSupplement",
+            "handoverDelete",
+          ],
+          reporting: [
+            "backup",
+            "monthlyBackup",
+            "monthlyBackupSetup",
+            "monthlyBackupStatus",
+            "pdf",
+          ],
           customerMapping: [
             "customerList",
             "customerBulkImport",
@@ -2780,6 +3213,7 @@ function doGet(e) {
       });
     }
     if (action === "backup") return cors({ status: "success", backupUrl: autoBackupDaily() });
+    if (action === "monthlyBackupStatus") return cors(getMonthlyBackupStatus());
     if (action === "pdf") return cors(exportPdf(sheetName));
 
     const sheet = resolveDataSheet(req.parameter);
@@ -2802,6 +3236,12 @@ function doPost(e) {
     const payload = JSON.parse((e && e.postData && e.postData.contents) || "{}");
 
     if (payload.action === "setupSheet") return cors(setupApplicationSheets());
+    if (payload.action === "monthlyBackupSetup") {
+      return cors(installMonthlyBackupTrigger());
+    }
+    if (payload.action === "monthlyBackup") {
+      return cors(autoBackupMonthly(Boolean(payload.force)));
+    }
     if (payload.action === "importExternal") return cors(importExternalSheet(payload));
     if (payload.action === "customerBulkImport") return cors(bulkImportCustomers(payload));
     if (payload.action === "customerDecision") return cors(updateCustomerDecision(payload));
@@ -2813,6 +3253,9 @@ function doPost(e) {
     if (payload.action === "handoverSave") return cors(saveHandover(payload));
     if (payload.action === "handoverDelete") return cors(deleteHandovers(payload));
     if (payload.action === "handoverAccept") return cors(acceptHandover(payload));
+    if (payload.action === "handoverSupplement") {
+      return cors(appendHandoverSupplement(payload));
+    }
     if (payload.action === "handoverSettle") {
       return cors(settleHandoverInventory(payload));
     }

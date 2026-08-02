@@ -18,6 +18,7 @@ export interface HandoverItem {
   returnedQty?: number;
   hospitalRemaining?: number;
   locationStatus?: string;
+  supplementRequestIds?: string[];
 }
 
 export interface HandoverInstrument {
@@ -28,6 +29,7 @@ export interface HandoverInstrument {
   unit: string;
   condition: string;
   note?: string;
+  supplementRequestIds?: string[];
 }
 
 export interface HandoverSignatureAudit {

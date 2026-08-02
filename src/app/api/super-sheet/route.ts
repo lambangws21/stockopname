@@ -217,6 +217,7 @@ export async function POST(req: NextRequest) {
       "handoverSave",
       "handoverAccept",
       "handoverSettle",
+      "handoverSupplement",
     ]);
     const timeoutMs = transactionActions.has(action)
       ? GAS_TRANSACTION_TIMEOUT_MS

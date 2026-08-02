@@ -230,7 +230,7 @@ export default function StockTablePremium({
   const [historyNo, setHistoryNo] = useState<number | null>(null);
   const [movementHistory, setMovementHistory] = useState<HistoryRow[]>([]);
   const [movementHistoryLoading, setMovementHistoryLoading] = useState(true);
-  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [showAllMovements, setShowAllMovements] = useState(false);
   const [movementRefresh, setMovementRefresh] = useState(0);
 
@@ -387,9 +387,17 @@ export default function StockTablePremium({
       .map((history) => {
         const reason = String(history.Action).toUpperCase() as MovementReason;
         const changes = parseChanges(history.Changes);
-        const qtyChange = changes.find(
-          (change) => change.field === "Qty" || change.field === "TotalQty"
-        );
+        const preferredField =
+          reason === "OPERASI"
+            ? "TERPAKAI"
+            : reason === "REFILL"
+              ? "REFILL"
+              : "TotalQty";
+        const qtyChange =
+          changes.find((change) => change.field === preferredField) ||
+          changes.find(
+            (change) => change.field === "Qty" || change.field === "TotalQty"
+          );
         const before = toSafeNumber(qtyChange?.before);
         const after = toSafeNumber(qtyChange?.after);
         const ket = changes.find((change) => change.field === "KET");
@@ -401,7 +409,7 @@ export default function StockTablePremium({
         return {
           ...history,
           reason,
-          qty: Math.abs(after - before),
+          qty: Math.max(1, Math.abs(after - before)),
           before,
           after,
           description: description || movementLabel(reason),
@@ -415,22 +423,38 @@ export default function StockTablePremium({
       );
   }, [filteredData, movementHistory]);
 
-  const movementSummary = useMemo(
-    () =>
-      movementEntries.reduce(
-        (summary, movement) => {
-          summary[movement.reason] += movement.qty;
-          return summary;
-        },
-        {
-          OPERASI: 0,
-          REFILL: 0,
-          MOBILISASI_KELUAR: 0,
-          MOBILISASI_MASUK: 0,
-        } satisfies Record<MovementReason, number>
-      ),
-    [movementEntries]
-  );
+  const movementSummary = useMemo(() => {
+    const summary = {
+      OPERASI: 0,
+      REFILL: 0,
+      MOBILISASI_KELUAR: 0,
+      MOBILISASI_MASUK: 0,
+    } satisfies Record<MovementReason, number>;
+    const outsideByRow = new Map<number, number>();
+    [...movementEntries].reverse().forEach((movement) => {
+      if (movement.reason === "OPERASI") summary.OPERASI += movement.qty;
+      if (movement.reason === "REFILL") summary.REFILL += movement.qty;
+      if (movement.reason === "MOBILISASI_MASUK") {
+        summary.MOBILISASI_MASUK += movement.qty;
+      }
+      const current = outsideByRow.get(movement.No) || 0;
+      if (movement.reason === "MOBILISASI_KELUAR") {
+        outsideByRow.set(movement.No, current + movement.qty);
+      } else if (movement.reason === "MOBILISASI_MASUK") {
+        outsideByRow.set(movement.No, Math.max(0, current - movement.qty));
+      } else if (
+        movement.reason === "OPERASI" &&
+        /dokumen|rumah sakit|\brs\b/i.test(movement.description)
+      ) {
+        outsideByRow.set(movement.No, Math.max(0, current - movement.qty));
+      }
+    });
+    summary.MOBILISASI_KELUAR = Array.from(outsideByRow.values()).reduce(
+      (total, quantity) => total + quantity,
+      0
+    );
+    return summary;
+  }, [movementEntries]);
 
   const lowStockAlertCount = useMemo(
     () =>
@@ -524,7 +548,7 @@ export default function StockTablePremium({
         </div>
       )}
       {/* HEADER */}
-      <div className="border-b bg-[#0f172a] px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:bg-linear-to-br sm:from-zinc-950 sm:via-zinc-900 sm:to-blue-950 sm:p-6">
+      <div className="hidden border-b bg-[#0f172a] px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:block sm:bg-linear-to-br sm:from-zinc-950 sm:via-zinc-900 sm:to-blue-950 sm:p-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-blue-300">
@@ -596,8 +620,42 @@ export default function StockTablePremium({
       </div>
 
       <div className="space-y-4 bg-[#f8fafc] p-3 pb-24 dark:bg-zinc-950 sm:bg-transparent sm:p-5 sm:pb-5 dark:sm:bg-transparent">
+      <section className="flex items-center gap-2 rounded-xl border bg-white p-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:hidden">
+        <div className="min-w-0 flex-1 pl-1">
+          <h2 className="truncate text-xs font-black">Daftar Stock Implant</h2>
+          <p className="mt-0.5 text-[9px] text-zinc-500">{data.length} data tersedia</p>
+        </div>
+        {onOpenScanner && (
+          <button
+            type="button"
+            onClick={onOpenScanner}
+            className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-bold text-zinc-600 dark:text-zinc-300"
+          >
+            <ScanLine size={14} /> Scan
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={reload}
+          className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-bold text-zinc-600 dark:text-zinc-300"
+        >
+          <RefreshCcw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsCreate(true);
+            setSelectedRow(null);
+            setEditOpen(true);
+          }}
+          className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 text-[9px] font-black text-white"
+        >
+          <Plus size={14} /> Tambah
+        </button>
+      </section>
+
       {/* COMPACT BRAND SELECTOR */}
-      <div className="-mt-7 grid grid-cols-3 gap-1 rounded-lg border bg-white p-1 shadow-sm dark:bg-zinc-900 sm:mt-0 sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
+      <div className="grid grid-cols-3 gap-1 rounded-lg border bg-white p-1 shadow-sm dark:bg-zinc-900 sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
         <button
           type="button"
           onClick={() => setBrandFilters([])}
@@ -912,7 +970,7 @@ export default function StockTablePremium({
       />
 
       {/* SUMMARY */}
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-slate-200 dark:bg-zinc-700 sm:grid-cols-4 sm:rounded-xl">
+      <div className="hidden grid-cols-2 gap-px overflow-hidden rounded-lg border bg-slate-200 dark:bg-zinc-700 sm:grid sm:grid-cols-4 sm:rounded-xl">
         <SimpleMetric label="Data" value={summary.count} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Stok" value={summary.qty} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Terpakai" value={summary.used} tone="text-red-600" />
@@ -933,10 +991,10 @@ export default function StockTablePremium({
           </div>
           <button
             type="button"
-            onClick={() => setTimelineExpanded((value) => !value)}
+            onClick={() => setTimelineOpen(true)}
             className="shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold hover:bg-zinc-50 dark:hover:bg-zinc-800"
           >
-            {timelineExpanded ? "Tutup" : "Lihat timeline"}
+            Lihat timeline
           </button>
         </div>
 
@@ -954,7 +1012,7 @@ export default function StockTablePremium({
             tone="emerald"
           />
           <MovementMetric
-            label="Support keluar"
+            label="Sedang di luar"
             value={movementSummary.MOBILISASI_KELUAR}
             icon={<Truck size={16} />}
             tone="amber"
@@ -967,54 +1025,6 @@ export default function StockTablePremium({
           />
         </div>
 
-        {timelineExpanded && <div className="border-t bg-zinc-50 px-3 py-4 dark:bg-zinc-800/40 sm:px-5">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-bold">Timeline terbaru</h3>
-            <span className="text-xs text-zinc-500">
-              {movementEntries.length} aktivitas
-            </span>
-          </div>
-
-          {movementHistoryLoading ? (
-            <div className="py-8 text-center text-sm text-zinc-400">
-              Memuat pergerakan implant…
-            </div>
-          ) : movementEntries.length === 0 ? (
-            <div className="rounded-xl border border-dashed bg-white px-4 py-8 text-center dark:bg-zinc-900">
-              <Activity className="mx-auto text-zinc-300" size={28} />
-              <p className="mt-2 text-sm font-semibold">Belum ada pergerakan</p>
-              <p className="mt-1 text-xs text-zinc-500">
-                Aktivitas operasi, refill, dan support cabang akan muncul di sini.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="relative space-y-3 pl-5 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
-                {movementEntries
-                  .slice(0, showAllMovements ? 20 : 3)
-                  .map((movement, index) => (
-                    <MovementTimelineItem
-                      key={`${movement.Timestamp}-${movement.No}-${index}`}
-                      movement={movement}
-                      onOpenHistory={() => {
-                        setHistoryNo(movement.No);
-                        setHistoryOpen(true);
-                      }}
-                    />
-                  ))}
-              </div>
-              {movementEntries.length > 3 && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllMovements((value) => !value)}
-                  className="mt-4 w-full rounded-xl border bg-white py-2.5 text-xs font-semibold hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                >
-                  {showAllMovements ? "Tampilkan lebih sedikit" : "Lihat timeline lainnya"}
-                </button>
-              )}
-            </>
-          )}
-        </div>}
       </section>
 
       {/* ================= TABLE VIEW ================= */}
@@ -1472,6 +1482,99 @@ export default function StockTablePremium({
           setLowStockAlertOpen(false);
         }}
       />
+
+      <AnimatePresence>
+        {timelineOpen && (
+          <motion.div
+            className="fixed inset-0 z-10030 flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setTimelineOpen(false);
+            }}
+          >
+            <motion.section
+              initial={{ y: 36, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 36, opacity: 0, scale: 0.98 }}
+              className="flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-3xl"
+            >
+              <header className="flex items-center justify-between gap-3 border-b p-4 sm:p-5">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                    <FootprintsIcon size={18} />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-black">Timeline Pergerakan Implant</h3>
+                    <p className="text-[10px] text-zinc-500">
+                      {movementEntries.length} aktivitas sesuai filter stock
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTimelineOpen(false)}
+                  className="flex size-10 shrink-0 items-center justify-center rounded-xl border hover:text-red-600"
+                  aria-label="Tutup timeline"
+                >
+                  <X size={18} />
+                </button>
+              </header>
+
+              <div className="grid grid-cols-2 gap-px border-b bg-slate-200 dark:bg-zinc-700 sm:grid-cols-4">
+                <MovementMetric label="Operasi" value={movementSummary.OPERASI} icon={<UserRoundCheckIcon size={16} />} tone="red" />
+                <MovementMetric label="Refill" value={movementSummary.REFILL} icon={<ArrowDownToLine size={16} />} tone="emerald" />
+                <MovementMetric label="Sedang di luar" value={movementSummary.MOBILISASI_KELUAR} icon={<Truck size={16} />} tone="amber" />
+                <MovementMetric label="Kembali" value={movementSummary.MOBILISASI_MASUK} icon={<ArrowUpFromLine size={16} />} tone="blue" />
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 sm:p-5">
+                {movementHistoryLoading ? (
+                  <div className="py-12 text-center text-sm text-zinc-400">
+                    Memuat pergerakan implant…
+                  </div>
+                ) : movementEntries.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed bg-white px-4 py-10 text-center dark:bg-zinc-900">
+                    <Activity className="mx-auto text-zinc-300" size={30} />
+                    <p className="mt-2 text-sm font-semibold">Belum ada pergerakan</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      Operasi, refill, support keluar, dan kembali akan muncul di sini.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative space-y-3 pl-5 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
+                      {movementEntries
+                        .slice(0, showAllMovements ? 100 : 10)
+                        .map((movement, index) => (
+                          <MovementTimelineItem
+                            key={`${movement.Timestamp}-${movement.No}-${index}`}
+                            movement={movement}
+                            onOpenHistory={() => {
+                              setTimelineOpen(false);
+                              setHistoryNo(movement.No);
+                              setHistoryOpen(true);
+                            }}
+                          />
+                        ))}
+                    </div>
+                    {movementEntries.length > 10 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllMovements((value) => !value)}
+                        className="mt-4 w-full rounded-xl border bg-white py-3 text-xs font-bold hover:bg-zinc-50 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                      >
+                        {showAllMovements ? "Tampilkan 10 terbaru" : `Lihat semua ${movementEntries.length} aktivitas`}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* HISTORY MODAL */}
       {historyNo !== null && (

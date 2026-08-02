@@ -186,6 +186,49 @@ export function gasBackup() {
   return request<{ backupUrl: string }>("GET", undefined, "action=backup");
 }
 
+export type MonthlyBackupResult = {
+  status: "success" | "exists" | "busy";
+  period?: string;
+  fileId?: string;
+  fileName?: string;
+  backupUrl?: string;
+  message?: string;
+};
+
+export type MonthlyBackupStatus = {
+  enabled: boolean;
+  schedule: string;
+  timezone: string;
+  lastPeriod: string;
+  lastBackupAt: string;
+  lastFileId: string;
+  backupUrl: string;
+};
+
+export function gasSetupMonthlyBackup() {
+  return request<{
+    triggerId: string;
+    schedule: string;
+    timezone: string;
+    message: string;
+  }>("POST", { action: "monthlyBackupSetup" });
+}
+
+export function gasRunMonthlyBackup(force = false) {
+  return request<MonthlyBackupResult>("POST", {
+    action: "monthlyBackup",
+    force,
+  });
+}
+
+export function gasGetMonthlyBackupStatus() {
+  return request<MonthlyBackupStatus>(
+    "GET",
+    undefined,
+    "action=monthlyBackupStatus"
+  );
+}
+
 /* =========================================================
    EXPORT PDF
 ========================================================= */

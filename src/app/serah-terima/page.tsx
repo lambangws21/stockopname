@@ -35,6 +35,11 @@ import {
 import { toast } from "sonner";
 import { gasGET } from "@/lib/gas";
 import {
+  createBackgroundTransaction,
+  updateBackgroundTransaction,
+} from "@/lib/background-transactions";
+import {
+  appendOnlineHandoverSupplement,
   deleteOnlineHandovers,
   listOnlineHandovers,
   saveOnlineHandover,
@@ -95,6 +100,8 @@ function OnlineHandoverContent() {
   const [documentSelectMode, setDocumentSelectMode] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [deletingDocuments, setDeletingDocuments] = useState(false);
+  const [supplementBase, setSupplementBase] = useState<OnlineHandover | null>(null);
+  const [supplementRequestId, setSupplementRequestId] = useState("");
   const itemLoadMoreRef = useRef<HTMLDivElement>(null);
   const accessoryLoadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -112,9 +119,10 @@ function OnlineHandoverContent() {
       const requested = requestedDocuments[0];
       if (
         requested?.VerificationToken &&
+        requestedToken &&
         requested.VerificationToken !== requestedToken
       ) {
-        throw new Error("Link verifikasi dokumen tidak valid atau tidak lengkap");
+        throw new Error("Token verifikasi dokumen tidak valid");
       }
       if (requested) {
         const normalized = normalizeHandoverDocument(requested);
@@ -148,6 +156,8 @@ function OnlineHandoverContent() {
   }, [requestedId, requestedToken]);
 
   async function openSavedDocument(document: OnlineHandover) {
+    setSupplementBase(null);
+    setSupplementRequestId("");
     if (!document.ID) {
       setForm(document);
       return;
@@ -347,6 +357,11 @@ function OnlineHandoverContent() {
   }
 
   async function persist(status: "DRAFT" | "DIKIRIM") {
+    if (supplementBase) {
+      if (status === "DIKIRIM") await submitSupplementShipment();
+      else toast.info("Kiriman tambahan langsung ditambahkan ke dokumen utama saat dikirim");
+      return;
+    }
     if (status === "DIKIRIM" && (!form.Hospital || !form.Sender)) {
       toast.error("Hospital dan nama pengirim wajib diisi");
       return;
@@ -366,9 +381,21 @@ function OnlineHandoverContent() {
     // ID disimpan sebelum request agar retry manual tidak menggandakan
     // pengurangan stok bila respons pertama terlambat.
     setForm(stableForm);
-    try {
-      const result = await saveOnlineHandover(stableForm);
+    const transaction = createBackgroundTransaction({
+      documentId: stableForm.ID!,
+      expectedStatus: status,
+      label:
+        status === "DIKIRIM"
+          ? "Mengirim serah terima"
+          : "Menyimpan draft BAST",
+    });
+    toast.info("Proses penyimpanan berjalan. Anda boleh membuka halaman lain.");
+    void saveOnlineHandover(stableForm).then((result) => {
       if (result.data) setForm(normalizeHandoverDocument(result.data));
+      updateBackgroundTransaction(transaction.id, {
+        status: "SUCCESS",
+        message: "Data sudah dikonfirmasi tersimpan di Google Sheet.",
+      });
       toast.success(
         status === "DIKIRIM"
           ? "Dokumen dikirim untuk diterima"
@@ -389,11 +416,25 @@ function OnlineHandoverContent() {
       } else {
         void listOnlineHandovers().then(setDocuments).catch(() => undefined);
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Gagal menyimpan");
-    } finally {
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Gagal menyimpan";
+      if (isAmbiguousTransactionError(message)) {
+        updateBackgroundTransaction(transaction.id, {
+          status: "PROCESSING",
+          message:
+            "Respons membutuhkan waktu. Sistem sedang memeriksa hasil langsung dari Google Sheet.",
+        });
+        toast.warning("Respons belum diterima. Status transaksi tetap diperiksa.");
+      } else {
+        updateBackgroundTransaction(transaction.id, {
+          status: "FAILED",
+          message,
+        });
+        toast.error(message);
+      }
+    }).finally(() => {
       setSaving(false);
-    }
+    });
   }
 
   async function accept() {
@@ -406,19 +447,40 @@ function OnlineHandoverContent() {
       return;
     }
     setSaving(true);
-    try {
-      const result = await saveOnlineHandover(
+    const transaction = createBackgroundTransaction({
+      documentId: form.ID!,
+      expectedStatus: "DITERIMA",
+      label: "Menyimpan penerimaan BAST",
+    });
+    toast.info("Penerimaan diproses. Anda boleh membuka halaman lain.");
+    void saveOnlineHandover(
         { ...form, Status: "DITERIMA" },
         true
-      );
+      ).then((result) => {
       if (result.data) setForm(normalizeHandoverDocument(result.data));
       localStorage.removeItem("implant-handover-autosave-v1");
+      updateBackgroundTransaction(transaction.id, {
+        status: "SUCCESS",
+        message: "Penerimaan sudah dikonfirmasi tersimpan di Google Sheet.",
+      });
       toast.success("Serah terima berhasil diterima");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Gagal menerima");
-    } finally {
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Gagal menerima";
+      if (isAmbiguousTransactionError(message)) {
+        updateBackgroundTransaction(transaction.id, {
+          status: "PROCESSING",
+          message: "Respons membutuhkan waktu. Status penerimaan sedang diperiksa ulang.",
+        });
+      } else {
+        updateBackgroundTransaction(transaction.id, {
+          status: "FAILED",
+          message,
+        });
+        toast.error(message);
+      }
+    }).finally(() => {
       setSaving(false);
-    }
+    });
   }
 
   async function saveHospitalUsage() {
@@ -566,14 +628,18 @@ function OnlineHandoverContent() {
 
   function createSupplementShipment() {
     if (!form.ID) return;
-    const originalId = form.ID;
+    const original = normalizeHandoverDocument(form);
+    const originalId = original.ID!;
     const next = buildHandoverFromStock(
       form.Procedure,
       normalizeBrand(form.Brand),
       stock
     );
+    setSupplementBase(original);
+    setSupplementRequestId(crypto.randomUUID());
     setForm({
       ...next,
+      ID: originalId,
       Hospital: form.Hospital,
       Surgeon: form.Surgeon,
       ApprovedBy: form.ApprovedBy,
@@ -583,6 +649,12 @@ function OnlineHandoverContent() {
       Checker1: form.Checker1,
       Checker2: form.Checker2,
       AcknowledgedBy: form.AcknowledgedBy,
+      SenderSignature: original.SenderSignature,
+      SenderSignatureMeta: original.SenderSignatureMeta,
+      Receiver: original.Receiver,
+      ReceiverSignature: original.ReceiverSignature,
+      ReceiverSignatureMeta: original.ReceiverSignatureMeta,
+      VerificationToken: original.VerificationToken,
       AcceptanceNote: `Kiriman tambahan untuk dokumen ${originalId}`,
       Items: next.Items.map((item) => ({
         ...item,
@@ -599,8 +671,51 @@ function OnlineHandoverContent() {
     setMobileItemsOpen(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
     toast.success(
-      `Draft kiriman tambahan dibuat. Pilih hanya implant yang kurang untuk ${originalId}`
+      `Mode kiriman tambahan aktif. Pilih implant yang kurang untuk ${originalId}`
     );
+  }
+
+  async function submitSupplementShipment() {
+    if (!supplementBase?.ID) return;
+    const selectedImplants = form.Items.filter(
+      (item) => item.selected && Number(item.qtyIssued || 0) > 0
+    );
+    const selectedInstruments = form.Instruments.filter(
+      (item) => item.selected && Number(item.qty || 0) > 0
+    );
+    if (!selectedImplants.length && !selectedInstruments.length) {
+      toast.error("Pilih minimal satu implant atau instrument tambahan");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await appendOnlineHandoverSupplement({
+        ID: supplementBase.ID,
+        Items: selectedImplants,
+        Instruments: selectedInstruments,
+        by: form.Sender || supplementBase.Sender || "Logistik",
+        requestId: supplementRequestId || crypto.randomUUID(),
+      });
+      if (result.data) setForm(normalizeHandoverDocument(result.data));
+      setSupplementBase(null);
+      setSupplementRequestId("");
+      toast.success("Kiriman tambahan masuk ke dokumen serah terima yang sama");
+      setShareModalOpen(true);
+      const [latestStock, updatedDocuments] = await Promise.all([
+        gasGET("Sheet1"),
+        listOnlineHandovers(),
+      ]);
+      setStock(latestStock.data ?? []);
+      setDocuments(updatedDocuments);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Kiriman tambahan gagal disimpan"
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   function goToMobileStep(step: "info" | "items" | "signature") {
@@ -621,7 +736,7 @@ function OnlineHandoverContent() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={!form.ID || printing}
+                disabled={!form.ID || printing || Boolean(supplementBase)}
                 onClick={() => void printDocument()}
                 className="hidden h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[10px] font-bold disabled:opacity-40 sm:inline-flex"
               >
@@ -630,7 +745,7 @@ function OnlineHandoverContent() {
               </button>
               <button
                 type="button"
-                disabled={saving || form.Status !== "DRAFT"}
+                disabled={saving || form.Status !== "DRAFT" || Boolean(supplementBase)}
                 onClick={() => void persist("DRAFT")}
                 className="hidden h-10 items-center gap-2 rounded-xl bg-blue-600 px-4 text-[10px] font-black shadow-lg shadow-blue-950/20 disabled:opacity-40 sm:inline-flex"
               >
@@ -666,6 +781,30 @@ function OnlineHandoverContent() {
       ) : (
         <div className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[260px_minmax(0,1fr)]">
           <div className="order-1 min-w-0 space-y-4 xl:order-2">
+            {supplementBase && (
+              <section className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white">
+                  <Plus size={17} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-black">Kiriman tambahan · dokumen yang sama</p>
+                  <p className="mt-0.5 truncate text-[9px]">
+                    Item akan digabungkan ke {supplementBase.ID}, bukan membuat dokumen baru.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm(supplementBase);
+                    setSupplementBase(null);
+                    setSupplementRequestId("");
+                  }}
+                  className="h-9 shrink-0 rounded-lg border border-blue-200 bg-white px-3 text-[9px] font-black text-blue-700"
+                >
+                  Batal
+                </button>
+              </section>
+            )}
             <nav className="sticky top-[118px] z-30 -mx-1 grid grid-cols-3 gap-1 rounded-2xl border bg-white/95 p-1.5 shadow-lg backdrop-blur sm:hidden dark:bg-zinc-900/95">
               {[
                 ["info", "1. Info RS"],
@@ -806,7 +945,7 @@ function OnlineHandoverContent() {
                   </label>
                   <button
                     type="button"
-                    disabled={Boolean(form.ID)}
+                    disabled={Boolean(form.ID) && !supplementBase}
                     onClick={() => {
                       setVisibleAccessoryCount(30);
                       setAccessoryModalOpen(true);
@@ -947,8 +1086,8 @@ function OnlineHandoverContent() {
             </div>
 
             <div className="hidden grid-cols-3 gap-2 sm:grid">
-              <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
-              <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">Kirim ke penerima</span></button>
+              <button disabled={saving || form.Status !== "DRAFT" || Boolean(supplementBase)} onClick={() => void persist("DRAFT")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl border bg-white px-1 text-[10px] font-bold disabled:opacity-40 dark:bg-zinc-900 sm:gap-2 sm:text-xs"><Save size={15} /> <span className="sm:hidden">Draft</span><span className="hidden sm:inline">Simpan draft</span></button>
+              <button disabled={saving || form.Status !== "DRAFT"} onClick={() => void persist("DIKIRIM")} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><Send size={15} /> <span className="sm:hidden">Kirim</span><span className="hidden sm:inline">{supplementBase ? "Tambahkan ke dokumen" : "Kirim ke penerima"}</span></button>
               <button disabled={saving || form.Status !== "DIKIRIM"} onClick={() => void accept()} className="inline-flex h-12 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-1 text-[10px] font-bold text-white disabled:opacity-40 sm:gap-2 sm:text-xs"><PackageCheck size={15} /> <span className="sm:hidden">Terima</span><span className="hidden sm:inline">Terima & setujui</span></button>
             </div>
 
@@ -1068,7 +1207,7 @@ function OnlineHandoverContent() {
         <div className="fixed inset-x-0 bottom-0 z-[70] grid grid-cols-3 gap-2 border-t bg-white/95 px-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_25px_rgba(15,23,42,0.12)] backdrop-blur sm:hidden dark:border-zinc-800 dark:bg-zinc-950/95">
           <button
             type="button"
-            disabled={saving || form.Status !== "DRAFT"}
+            disabled={saving || form.Status !== "DRAFT" || Boolean(supplementBase)}
             onClick={() => void persist("DRAFT")}
             className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl border bg-white text-[10px] font-black disabled:opacity-40 dark:bg-zinc-900"
           >
@@ -1091,11 +1230,11 @@ function OnlineHandoverContent() {
             }`}
           >
             {form.Status === "DIKIRIM" ? <PackageCheck size={15} /> : <Send size={15} />}
-            {form.Status === "DIKIRIM" ? "Terima" : form.Status === "DITERIMA" ? "Selesai" : "Kirim"}
+            {supplementBase ? "Kirim Tambahan" : form.Status === "DIKIRIM" ? "Terima" : form.Status === "DITERIMA" ? "Selesai" : "Kirim"}
           </button>
           <button
             type="button"
-            disabled={!form.ID || printing}
+            disabled={!form.ID || printing || Boolean(supplementBase)}
             onClick={() => void printDocument()}
             className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-[10px] font-black text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
             aria-label="Cetak PDF"
@@ -2544,6 +2683,12 @@ function createVerificationToken() {
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 20);
+}
+
+function isAmbiguousTransactionError(message: string) {
+  return /timeout|terlalu lama|belum menerima respons|504|koneksi/i.test(
+    message
+  );
 }
 
 function readLocalHandoverDraft(): OnlineHandover | null {
