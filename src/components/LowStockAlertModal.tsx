@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   Check,
@@ -8,11 +9,15 @@ import {
   Copy,
   MessageCircle,
   PackageX,
+  FileSpreadsheet,
+  LoaderCircle,
+  Search,
   Share2,
   X,
 } from "lucide-react";
 import type { StockRow } from "@/types/stock";
 import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
+import { toast } from "sonner";
 
 export default function LowStockAlertModal({
   open,
@@ -30,8 +35,14 @@ export default function LowStockAlertModal({
   const [logisticsNote, setLogisticsNote] = useState("");
   const [copied, setCopied] = useState(false);
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set());
-  const [excludedBrands, setExcludedBrands] = useState<Set<string>>(new Set());
   const [shareExpanded, setShareExpanded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [brandFilter, setBrandFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "OUT" | "LOW">("ALL");
+  const [selectionPreset, setSelectionPreset] = useState<"ALL" | "OUT" | "LOW" | "CUSTOM">("OUT");
+  const [requestingKeys, setRequestingKeys] = useState<Set<string>>(new Set());
+  const [orderedKeys, setOrderedKeys] = useState<Set<string>>(new Set());
+  const [visibleLimit, setVisibleLimit] = useState(40);
 
   const warningRows = useMemo(
     () =>
@@ -45,26 +56,33 @@ export default function LowStockAlertModal({
     () =>
       Array.from(
         new Set(
-          warningRows
-            .filter((row) => Number(row.TotalQty || 0) > 0)
-            .map((row) => row.Brand || "TANPA BRAND")
+          warningRows.map((row) => row.Brand || "TANPA BRAND")
         )
       ).sort(),
     [warningRows]
   );
   const selectedRows = useMemo(
     () =>
-      warningRows.filter(
-        (row) =>
-          !excludedKeys.has(stockRowKey(row)) &&
-          (Number(row.TotalQty || 0) <= 0 ||
-            !excludedBrands.has(row.Brand || "TANPA BRAND"))
-      ),
-    [warningRows, excludedKeys, excludedBrands]
+      warningRows.filter((row) => {
+        const qty = Number(row.TotalQty || 0);
+        const text = [row.NoStok, row.Deskripsi, row.Batch, row.Brand, row.Implant]
+          .join(" ")
+          .toLowerCase();
+        const matchesQuery = !query.trim() || text.includes(query.trim().toLowerCase());
+        const matchesBrand = brandFilter === "ALL" || (row.Brand || "TANPA BRAND") === brandFilter;
+        const matchesStatus = statusFilter === "ALL" || (statusFilter === "OUT" ? qty <= 0 : qty > 0);
+        const matchesPreset = selectionPreset === "ALL" || selectionPreset === "CUSTOM" || (selectionPreset === "OUT" ? qty <= 0 : qty > 0);
+        return matchesQuery && matchesBrand && matchesStatus && matchesPreset && !excludedKeys.has(stockRowKey(row));
+      }),
+    [brandFilter, excludedKeys, query, selectionPreset, statusFilter, warningRows]
   );
   const shareText = useMemo(
     () => buildLogisticsMessage(selectedRows, threshold, logisticsNote),
     [selectedRows, threshold, logisticsNote]
+  );
+  const selectedRowKeys = useMemo(
+    () => new Set(selectedRows.map(stockRowKey)),
+    [selectedRows]
   );
 
   if (!open) return null;
@@ -76,13 +94,71 @@ export default function LowStockAlertModal({
     const qty = Number(row.TotalQty || 0);
     return !isDiscontinuedStock(row) && !isSupportCenterStock(row) && qty > 0 && qty <= threshold;
   });
-  const activeBrands = warningBrands.filter(
-    (brand) => !excludedBrands.has(brand)
+  const matchesVisibleFilter = (row: StockRow) => {
+    const text = [row.NoStok, row.Deskripsi, row.Batch, row.Brand, row.Implant]
+      .join(" ")
+      .toLowerCase();
+    return (
+      (!query.trim() || text.includes(query.trim().toLowerCase())) &&
+      (brandFilter === "ALL" || (row.Brand || "TANPA BRAND") === brandFilter)
+    );
+  };
+  const visibleOutOfStock = statusFilter === "LOW" ? [] : outOfStock.filter(matchesVisibleFilter);
+  const visibleLowStock = statusFilter === "OUT" ? [] : lowStock.filter(matchesVisibleFilter);
+  const renderedOutOfStock = visibleOutOfStock.slice(0, visibleLimit);
+  const renderedLowStock = visibleLowStock.slice(
+    0,
+    Math.max(0, visibleLimit - renderedOutOfStock.length)
   );
-  const visibleOutOfStock = outOfStock;
-  const visibleLowStock = lowStock.filter(
-    (row) => !excludedBrands.has(row.Brand || "TANPA BRAND")
-  );
+  const renderedCount = renderedOutOfStock.length + renderedLowStock.length;
+  const filteredCount = visibleOutOfStock.length + visibleLowStock.length;
+
+  async function markOrdered(row: StockRow) {
+    const key = stockRowKey(row);
+    setRequestingKeys((current) => new Set(current).add(key));
+    try {
+      const response = await fetch("/api/super-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "warningQuickAction",
+          StockSheet: "Sheet1",
+          No: row.No,
+          NoStok: row.NoStok,
+          Batch: row.Batch,
+          WorkflowStatus: "SEDANG DIPESAN",
+          by: "Warning Stock Modal",
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.status !== "success") throw new Error(result.message || "Gagal menandai");
+      setOrderedKeys((current) => new Set(current).add(key));
+      toast.success(`${row.NoStok || "Implant"} ditandai sedang dipesan`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Quick action gagal");
+    } finally {
+      setRequestingKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  }
+
+  function toggleRowSelection(row: StockRow) {
+    const key = stockRowKey(row);
+    const desired = new Set(selectedRows.map(stockRowKey));
+    if (desired.has(key)) desired.delete(key);
+    else desired.add(key);
+    setSelectionPreset("CUSTOM");
+    setExcludedKeys(
+      new Set(
+        warningRows
+          .map(stockRowKey)
+          .filter((warningKey) => !desired.has(warningKey))
+      )
+    );
+  }
 
   if (outOfStock.length === 0 && lowStock.length === 0) return null;
 
@@ -142,35 +218,27 @@ export default function LowStockAlertModal({
           </button>
         </div>
 
+        <div className="border-b bg-white p-2.5 dark:bg-zinc-900 sm:p-3">
+          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_140px_130px]">
+            <label className="relative">
+              <Search size={15} className="absolute left-3 top-3.5 text-zinc-400" />
+              <input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleLimit(40); }} placeholder="Cari REF, nama, LOT..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-9 text-xs outline-none focus:border-blue-500" />
+              {query && <button type="button" onClick={() => setQuery("")} className="absolute right-2 top-2 flex size-7 items-center justify-center rounded-lg text-zinc-400" aria-label="Hapus pencarian"><X size={13} /></button>}
+            </label>
+            <select value={brandFilter} onChange={(event) => { setBrandFilter(event.target.value); setVisibleLimit(40); }} className="h-11 rounded-xl border bg-white px-3 text-xs font-bold dark:bg-zinc-900">
+              <option value="ALL">Semua brand</option>
+              {warningBrands.map((brand) => <option key={brand}>{brand}</option>)}
+            </select>
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as "ALL" | "OUT" | "LOW"); setVisibleLimit(40); }} className="h-11 rounded-xl border bg-white px-3 text-xs font-bold dark:bg-zinc-900">
+              <option value="ALL">Semua status</option>
+              <option value="OUT">Habis</option>
+              <option value="LOW">Menipis</option>
+            </select>
+          </div>
+        </div>
+
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-2.5 dark:bg-zinc-950/50 sm:space-y-4 sm:p-5">
           <section className="overflow-hidden rounded-2xl border bg-white dark:bg-zinc-900">
-            <div className="hidden border-b border-blue-100 bg-white/70 px-3.5 py-3 dark:border-blue-900 dark:bg-zinc-900/60 sm:block">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
-                Brand stok menipis yang ditampilkan
-              </p>
-              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {activeBrands.length > 0 ? (
-                  activeBrands.map((brand) => (
-                    <span
-                      key={brand}
-                      className="rounded-full bg-blue-600 px-2.5 py-1 text-[10px] font-bold text-white"
-                    >
-                      {brand}
-                    </span>
-                  ))
-                ) : (
-                  <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold text-red-600">
-                    {warningBrands.length === 0
-                      ? "Tidak ada stok menipis"
-                      : "Tidak ada brand dipilih"}
-                  </span>
-                )}
-                <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold text-red-700 dark:bg-red-950 dark:text-red-300">
-                  Stok 0: semua brand
-                </span>
-              </div>
-            </div>
-
             <div className="p-3.5">
             <button
               type="button"
@@ -193,80 +261,14 @@ export default function LowStockAlertModal({
                 />
               </span>
             </button>
-            <div className="mt-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedRows.length === warningRows.length) {
-                    setExcludedKeys(new Set(warningRows.map(stockRowKey)));
-                  } else {
-                    setExcludedKeys(new Set());
-                    setExcludedBrands(new Set());
-                  }
-                }}
-                className="text-[10px] font-bold text-blue-600 hover:underline"
-              >
-                {selectedRows.length === warningRows.length
-                  ? "Kosongkan pilihan"
-                  : "Pilih semua"}
-              </button>
+            <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
+              {([[
+                "OUT",
+                `Habis (${outOfStock.length})`,
+              ], ["LOW", `Menipis (${lowStock.length})`], ["ALL", `Semua (${warningRows.length})`]] as const).map(([value, label]) => (
+                <button key={value} type="button" onClick={() => { setSelectionPreset(value); setExcludedKeys(new Set()); }} className={`h-9 rounded-lg px-1 text-[9px] font-black transition ${selectionPreset === value ? "bg-blue-600 text-white shadow-sm" : "text-zinc-500"}`}>{label}</button>
+              ))}
             </div>
-
-            {shareExpanded && <div className="mt-3 rounded-xl border border-blue-100 bg-white/70 p-2.5 dark:border-blue-900 dark:bg-zinc-900/70">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <p className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">
-                  Filter brand stok menipis
-                </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExcludedBrands(
-                      excludedBrands.size === 0
-                        ? new Set(warningBrands)
-                        : new Set()
-                    )
-                  }
-                  className="text-[10px] font-bold text-blue-600 hover:underline"
-                >
-                  {excludedBrands.size === 0
-                    ? "Kosongkan brand"
-                    : "Pilih semua brand"}
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {warningBrands.map((brand) => {
-                  const checked = !excludedBrands.has(brand);
-                  const count = warningRows.filter(
-                    (row) =>
-                      Number(row.TotalQty || 0) > 0 &&
-                      (row.Brand || "TANPA BRAND") === brand
-                  ).length;
-                  return (
-                    <label
-                      key={brand}
-                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-[10px] font-bold ${
-                        checked
-                          ? "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                          : "border-zinc-200 bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          toggleToken(brand, setExcludedBrands)
-                        }
-                        className="size-3.5 rounded accent-blue-600"
-                      />
-                      {brand}
-                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] dark:bg-zinc-900">
-                        {count}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>}
 
             {shareExpanded && (
             <>
@@ -316,51 +318,48 @@ export default function LowStockAlertModal({
             </div>
           </section>
 
-          {visibleOutOfStock.length > 0 && (
+          {renderedOutOfStock.length > 0 && (
             <AlertGroup
               title="Stok Habis"
-              rows={visibleOutOfStock}
+              rows={renderedOutOfStock}
               tone="red"
-              excludedKeys={excludedKeys}
-              excludedBrands={excludedBrands}
-              onToggle={(row) => toggleExcluded(row, setExcludedKeys)}
+              selectedKeys={selectedRowKeys}
+              onToggle={toggleRowSelection}
+              requestingKeys={requestingKeys}
+              orderedKeys={orderedKeys}
+              onMarkOrdered={(row) => void markOrdered(row)}
             />
           )}
-          {visibleLowStock.length > 0 && (
+          {renderedLowStock.length > 0 && (
             <AlertGroup
               title={`Stok Menipis (maks. ${threshold})`}
-              rows={visibleLowStock}
+              rows={renderedLowStock}
               tone="amber"
-              excludedKeys={excludedKeys}
-              excludedBrands={excludedBrands}
-              onToggle={(row) => toggleExcluded(row, setExcludedKeys)}
+              selectedKeys={selectedRowKeys}
+              onToggle={toggleRowSelection}
+              requestingKeys={requestingKeys}
+              orderedKeys={orderedKeys}
+              onMarkOrdered={(row) => void markOrdered(row)}
             />
           )}
-          {activeBrands.length === 0 && lowStock.length > 0 && (
-            <div className="rounded-2xl border border-dashed p-6 text-center">
-              <PackageX className="mx-auto text-zinc-300" size={28} />
-              <p className="mt-2 text-xs font-bold text-zinc-600 dark:text-zinc-300">
-                Tidak ada brand stok menipis dipilih
-              </p>
-              <p className="mt-1 text-[10px] text-zinc-400">
-                Stok habis tetap ditampilkan. Centang brand untuk melihat stok menipis.
-              </p>
-            </div>
+          {renderedCount < filteredCount && (
+            <button type="button" onClick={() => setVisibleLimit((current) => current + 40)} className="flex h-11 w-full items-center justify-center rounded-xl border bg-white text-xs font-black text-blue-600 dark:bg-zinc-900">
+              Muat 40 berikutnya · {filteredCount - renderedCount} tersisa
+            </button>
           )}
         </div>
 
-        <footer className="grid grid-cols-2 gap-2 border-t bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:bg-zinc-900 sm:flex sm:justify-end sm:px-5 sm:pb-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 rounded-xl border px-4 text-xs font-semibold"
-          >
-            Tutup
+        <footer className="grid grid-cols-3 gap-2 border-t bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:bg-zinc-900 sm:flex sm:justify-end sm:px-5 sm:pb-3">
+          <Link href="/logistik" onClick={onClose} className="inline-flex h-10 items-center justify-center rounded-xl border px-2 text-[9px] font-bold sm:px-4 sm:text-xs">
+            Halaman penuh
+          </Link>
+          <button type="button" disabled={selectedRows.length === 0} onClick={() => void exportWarningExcel(selectedRows)} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border px-2 text-[9px] font-bold disabled:opacity-40 sm:px-4 sm:text-xs">
+            <FileSpreadsheet size={14} /> Excel
           </button>
           <button
             type="button"
             onClick={() => onShowStatus(outOfStock.length > 0 ? "OUT" : "LOW")}
-            className="h-10 rounded-xl bg-red-600 px-4 text-xs font-semibold text-white hover:bg-red-500"
+            className="h-10 rounded-xl bg-red-600 px-2 text-[9px] font-bold text-white hover:bg-red-500 sm:px-4 sm:text-xs"
           >
             Tampilkan di tabel
           </button>
@@ -372,31 +371,6 @@ export default function LowStockAlertModal({
 
 function stockRowKey(row: StockRow) {
   return `${row.No}:${row.NoStok}:${row.Batch}`;
-}
-
-function toggleExcluded(
-  row: StockRow,
-  setExcludedKeys: React.Dispatch<React.SetStateAction<Set<string>>>
-) {
-  const key = stockRowKey(row);
-  setExcludedKeys((current) => {
-    const next = new Set(current);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    return next;
-  });
-}
-
-function toggleToken(
-  token: string,
-  setter: React.Dispatch<React.SetStateAction<Set<string>>>
-) {
-  setter((current) => {
-    const next = new Set(current);
-    if (next.has(token)) next.delete(token);
-    else next.add(token);
-    return next;
-  });
 }
 
 function buildLogisticsMessage(
@@ -465,20 +439,60 @@ function openWhatsApp(text: string) {
   );
 }
 
+async function exportWarningExcel(rows: StockRow[]) {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Warning Stock");
+  sheet.columns = [
+    { header: "Status", key: "status", width: 14 },
+    { header: "Brand", key: "brand", width: 14 },
+    { header: "REF", key: "ref", width: 20 },
+    { header: "Deskripsi", key: "description", width: 52 },
+    { header: "Kategori", key: "category", width: 22 },
+    { header: "LOT", key: "lot", width: 18 },
+    { header: "Sisa", key: "stock", width: 10 },
+  ];
+  rows.forEach((row) => sheet.addRow({
+    status: Number(row.TotalQty || 0) <= 0 ? "HABIS" : "MENIPIS",
+    brand: row.Brand || "-",
+    ref: row.NoStok || "-",
+    description: row.Deskripsi || "-",
+    category: row.Implant || "-",
+    lot: row.Batch || "-",
+    stock: Number(row.TotalQty || 0),
+  }));
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF991B1B" } };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.autoFilter = { from: "A1", to: `G${Math.max(1, rows.length + 1)}` };
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `warning-stock-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function AlertGroup({
   title,
   rows,
   tone,
-  excludedKeys,
-  excludedBrands,
+  selectedKeys,
   onToggle,
+  requestingKeys,
+  orderedKeys,
+  onMarkOrdered,
 }: {
   title: string;
   rows: StockRow[];
   tone: "red" | "amber";
-  excludedKeys: Set<string>;
-  excludedBrands: Set<string>;
+  selectedKeys: Set<string>;
   onToggle: (row: StockRow) => void;
+  requestingKeys: Set<string>;
+  orderedKeys: Set<string>;
+  onMarkOrdered: (row: StockRow) => void;
 }) {
   const styles =
     tone === "red"
@@ -500,11 +514,7 @@ function AlertGroup({
       </div>
       <div className="space-y-2">
         {rows.map((row) => {
-          const brandSelected =
-            Number(row.TotalQty || 0) <= 0 ||
-            !excludedBrands.has(row.Brand || "TANPA BRAND");
-          const rowSelected =
-            brandSelected && !excludedKeys.has(stockRowKey(row));
+          const rowSelected = selectedKeys.has(stockRowKey(row));
           return (
           <article
             key={stockRowKey(row)}
@@ -517,7 +527,6 @@ function AlertGroup({
                 <input
                   type="checkbox"
                   checked={rowSelected}
-                  disabled={!brandSelected}
                   onChange={() => onToggle(row)}
                   className="size-5 rounded border-zinc-300 accent-blue-600"
                   aria-label={`Pilih ${row.NoStok || row.Deskripsi}`}
@@ -555,6 +564,15 @@ function AlertGroup({
                     ? "Tidak tersedia — segera jadwalkan refill."
                     : "Jika digunakan lagi, stok akan habis."}
                 </p>
+                <button
+                  type="button"
+                  disabled={requestingKeys.has(stockRowKey(row)) || orderedKeys.has(stockRowKey(row))}
+                  onClick={() => onMarkOrdered(row)}
+                  className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[9px] font-black text-blue-700 disabled:opacity-60 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300"
+                >
+                  {requestingKeys.has(stockRowKey(row)) ? <LoaderCircle size={12} className="animate-spin" /> : orderedKeys.has(stockRowKey(row)) ? <Check size={12} /> : <Share2 size={12} />}
+                  {orderedKeys.has(stockRowKey(row)) ? "Sudah dipesan" : "Tandai dipesan"}
+                </button>
               </div>
               <div className={`shrink-0 rounded-lg px-2 py-1.5 text-center sm:rounded-xl sm:px-2.5 sm:py-2 ${
                 tone === "red"

@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 42;
+const APP_VERSION = 43;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -1728,6 +1728,49 @@ function updateStockWarningWorkflow(payload) {
       return safeNumber(item.Row) === rowNumber;
     })[0],
   };
+}
+
+function quickUpdateStockWarning(payload) {
+  const stockSheetName = String(payload.StockSheet || DEFAULT_SHEET);
+  const stockNo = safeNumber(payload.No);
+  const ref = String(payload.NoStok || "").trim().toUpperCase();
+  const batch = String(payload.Batch || "").trim().toUpperCase();
+  const stockSheet = getOrCreateSheet(stockSheetName);
+  normalizeSheet(stockSheet);
+
+  if (stockNo >= 2 && stockNo <= stockSheet.getLastRow()) {
+    const stockValues = stockSheet
+      .getRange(stockNo, 1, 1, MASTER_HEADERS.length)
+      .getValues()[0];
+    const stockRow = rowArrayToObject(stockValues, stockNo);
+    upsertStockWarning(stockSheetName, stockNo, stockRow, stockRow.KET || "Quick action logistik");
+  }
+
+  const warningSheet = getStockWarningSheet();
+  const rows = warningSheet.getDataRange().getValues();
+  var targetRow = 0;
+  for (var index = 1; index < rows.length; index++) {
+    const sameSheet = String(rows[index][2] || DEFAULT_SHEET) === stockSheetName;
+    const sameNo = stockNo > 0 && safeNumber(rows[index][3]) === stockNo;
+    const sameIdentity =
+      ref &&
+      String(rows[index][4] || "").trim().toUpperCase() === ref &&
+      String(rows[index][8] || "").trim().toUpperCase() === batch;
+    if (sameSheet && (sameNo || sameIdentity)) {
+      targetRow = index + 1;
+      break;
+    }
+  }
+  if (!targetRow) {
+    return { status: "error", message: "Warning stock belum tersedia" };
+  }
+  return updateStockWarningWorkflow({
+    Row: targetRow,
+    WorkflowStatus: payload.WorkflowStatus || "SEDANG DIPESAN",
+    PIC: payload.PIC || "",
+    LogisticsNote: payload.LogisticsNote || "Ditandai dari Warning Stock Modal",
+    by: payload.by || "Warning Stock Modal",
+  });
 }
 
 function syncStockWarnings() {
@@ -3558,6 +3601,7 @@ function doPost(e) {
     if (payload.action === "customerDelete") return cors(deleteCustomer(payload));
     if (payload.action === "customerJourney") return cors(advanceCustomerJourney(payload));
     if (payload.action === "warningUpdate") return cors(updateStockWarningWorkflow(payload));
+    if (payload.action === "warningQuickAction") return cors(quickUpdateStockWarning(payload));
     if (payload.action === "historyDelete") return cors(deleteHistoryRows(payload));
     if (payload.action === "handoverSave") return cors(saveHandover(payload));
     if (payload.action === "handoverDelete") return cors(deleteHandovers(payload));
