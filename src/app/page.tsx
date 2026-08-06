@@ -311,7 +311,7 @@ function DashboardOverview({
     (total, row) => total + Number(row.REFILL || 0),
     0
   );
-  const outstandingSupport = buildOutstandingSupport(history, stock);
+  const outstandingSupport = buildOutstandingSupport(history, stock, documents);
   const returnHistory = history.filter(
     (row) => String(row.Action).toUpperCase() === "MOBILISASI_MASUK"
   );
@@ -424,7 +424,7 @@ function DashboardOverview({
                 )}
               </button>
               {notificationsOpen && (
-                <div className="absolute right-0 top-[calc(100%+0.6rem)] z-[80] max-h-[70dvh] w-[min(380px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 text-zinc-900 shadow-2xl ring-1 ring-slate-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
+                <div className="absolute right-0 top-[calc(100%+0.6rem)] z-80 max-h-[70dvh] w-[min(380px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 text-zinc-900 shadow-2xl ring-1 ring-slate-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs font-black">Perlu tindakan</p>
@@ -824,7 +824,7 @@ function DashboardOverview({
 
       {commandOpen && (
         <div
-          className="fixed inset-0 z-[120] flex items-start justify-center bg-slate-950/55 p-3 pt-[max(5rem,12vh)] backdrop-blur-sm"
+          className="fixed inset-0 z-120 flex items-start justify-center bg-slate-950/55 p-3 pt-[max(5rem,12vh)] backdrop-blur-sm"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setCommandOpen(false);
           }}
@@ -903,7 +903,7 @@ function DashboardOverview({
 
       {lowStockOpen && (
         <div
-          className="fixed inset-0 z-[125] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
+          className="fixed inset-0 z-125 flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setLowStockOpen(false);
           }}
@@ -976,6 +976,7 @@ function DashboardOverview({
           kind={listModal}
           stock={stock}
           history={history}
+          documents={documents}
           search={listSearch}
           onSearch={setListSearch}
           onClose={() => {
@@ -997,6 +998,7 @@ function DashboardDataModal({
   kind,
   stock,
   history,
+  documents,
   search,
   onSearch,
   onClose,
@@ -1005,6 +1007,7 @@ function DashboardDataModal({
   kind: DashboardListKind;
   stock: StockRow[];
   history: HistoryRow[];
+  documents: OnlineHandover[];
   search: string;
   onSearch: (value: string) => void;
   onClose: () => void;
@@ -1030,10 +1033,10 @@ function DashboardDataModal({
         .includes(query)
     );
   });
-  const outstandingItems = buildOutstandingSupport(history, stock).filter(
-    ({ row, lastEntry }) =>
+  const outstandingItems = buildOutstandingSupport(history, stock, documents).filter(
+    ({ row, lastEntry, location }) =>
       !query ||
-      [row.NoStok, row.Deskripsi, row.Batch, row.Brand, lastEntry.By]
+      [row.NoStok, row.Deskripsi, row.Batch, row.Brand, lastEntry?.By, location]
         .join(" ")
         .toLowerCase()
         .includes(query)
@@ -1066,7 +1069,7 @@ function DashboardDataModal({
 
   return (
     <div
-      className="fixed inset-0 z-[130] flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-130 flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -1127,7 +1130,7 @@ function DashboardDataModal({
               </button>
             );
           })}
-          {kind === "SUPPORT_OUT" && outstandingItems.map(({ row, quantity, lastEntry }) => (
+          {kind === "SUPPORT_OUT" && outstandingItems.map(({ row, quantity, lastEntry, location }) => (
             <button
               key={`outstanding-${row.No}-${row.Batch}`}
               type="button"
@@ -1143,7 +1146,10 @@ function DashboardDataModal({
                   REF {row.NoStok} · LOT {row.Batch || "-"} · {row.Brand || "-"}
                 </span>
                 <span className="mt-0.5 block truncate text-[8px] text-zinc-400">
-                  Aktivitas terakhir {formatDashboardDateTime(lastEntry.Timestamp)}
+                  {location || "Support manual"}
+                  {lastEntry?.Timestamp
+                    ? ` · ${formatDashboardDateTime(lastEntry.Timestamp)}`
+                    : ""}
                 </span>
               </span>
               <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[8px] font-black text-amber-700">
@@ -1317,11 +1323,77 @@ function historyMovementNote(row: HistoryRow) {
   }
 }
 
-function buildOutstandingSupport(history: HistoryRow[], stock: StockRow[]) {
+function buildOutstandingSupport(
+  history: HistoryRow[],
+  stock: StockRow[],
+  documents: OnlineHandover[]
+) {
   const stockByNo = new Map(stock.map((row) => [Number(row.No), row]));
-  const balances = new Map<
+  const stockByIdentity = new Map(
+    stock.map((row) => [
+      `${String(row.NoStok).trim()}|${String(row.Batch || "").trim()}`,
+      row,
+    ])
+  );
+  const active = new Map<
     number,
-    { quantity: number; lastEntry: HistoryRow }
+    {
+      quantity: number;
+      lastEntry?: HistoryRow;
+      locations: Set<string>;
+      lastUpdated: string;
+    }
+  >();
+
+  // Dokumen OnlineHandover adalah sumber utama posisi stock di rumah sakit.
+  // History tidak dipakai untuk BAST karena sifatnya akumulatif/audit.
+  documents
+    .filter((document) => document.Status !== "DRAFT")
+    .forEach((document) => {
+      document.Items.forEach((item) => {
+        const hospitalQty = Math.max(
+          0,
+          Number(item.hospitalQty ?? item.qtyIssued ?? 0) || 0
+        );
+        const remaining = Math.max(
+          0,
+          hospitalQty -
+            (Number(item.usedQty || 0) || 0) -
+            (Number(item.returnedQty || 0) || 0)
+        );
+        if (remaining <= 0) return;
+        const requestedRow = stockByNo.get(Number(item.stockRow));
+        const row =
+          requestedRow &&
+          String(requestedRow.NoStok) === String(item.partNumber) &&
+          String(requestedRow.Batch || "") === String(item.batch || "")
+            ? requestedRow
+            : stockByIdentity.get(
+                `${String(item.partNumber).trim()}|${String(item.batch || "").trim()}`
+              );
+        if (!row) return;
+        const no = Number(row.No);
+        const current = active.get(no) || {
+          quantity: 0,
+          locations: new Set<string>(),
+          lastUpdated: "",
+        };
+        current.quantity += remaining;
+        current.locations.add(`RS ${String(document.Hospital || "-").trim()}`);
+        current.lastUpdated =
+          document.HospitalUpdatedAt ||
+          document.UpdatedAt ||
+          document.AcceptedAt ||
+          document.SentAt ||
+          current.lastUpdated;
+        active.set(no, current);
+      });
+    });
+
+  // History hanya melengkapi support manual cabang yang tidak memakai BAST.
+  const manualBalances = new Map<
+    number,
+    { quantity: number; lastEntry?: HistoryRow }
   >();
   const chronological = [...history].sort(
     (first, second) =>
@@ -1332,7 +1404,9 @@ function buildOutstandingSupport(history: HistoryRow[], stock: StockRow[]) {
     const no = Number(entry.No);
     if (!stockByNo.has(no)) return;
     const action = String(entry.Action || "").toUpperCase();
-    const current = balances.get(no) || { quantity: 0, lastEntry: entry };
+    const note = historyMovementNote(entry);
+    if (/serah terima\s+ST-|dokumen\s+ST-/i.test(note)) return;
+    const current = manualBalances.get(no) || { quantity: 0 };
     const quantity = historyMovementQty(entry);
     if (action === "MOBILISASI_KELUAR") {
       current.quantity += quantity;
@@ -1340,28 +1414,37 @@ function buildOutstandingSupport(history: HistoryRow[], stock: StockRow[]) {
     } else if (action === "MOBILISASI_MASUK") {
       current.quantity = Math.max(0, current.quantity - quantity);
       current.lastEntry = entry;
-    } else if (
-      action === "OPERASI" &&
-      /dokumen|rumah sakit|\brs\b/i.test(historyMovementNote(entry))
-    ) {
-      // Pemakaian di RS menyelesaikan posisi barang yang sebelumnya keluar.
-      current.quantity = Math.max(0, current.quantity - quantity);
-      current.lastEntry = entry;
     }
-    balances.set(no, current);
+    manualBalances.set(no, current);
   });
 
-  return Array.from(balances.entries())
+  manualBalances.forEach((manual, no) => {
+    if (manual.quantity <= 0) return;
+    const current = active.get(no) || {
+      quantity: 0,
+      locations: new Set<string>(),
+      lastUpdated: "",
+    };
+    current.quantity += manual.quantity;
+    current.locations.add("Support cabang/manual");
+    current.lastEntry = manual.lastEntry;
+    current.lastUpdated = manual.lastEntry?.Timestamp || current.lastUpdated;
+    active.set(no, current);
+  });
+
+  return Array.from(active.entries())
     .filter(([, value]) => value.quantity > 0)
     .map(([no, value]) => ({
       row: stockByNo.get(no)!,
       quantity: value.quantity,
       lastEntry: value.lastEntry,
+      location: Array.from(value.locations).join(" · "),
+      lastUpdated: value.lastUpdated,
     }))
     .sort(
       (first, second) =>
-        new Date(second.lastEntry.Timestamp).getTime() -
-        new Date(first.lastEntry.Timestamp).getTime()
+        new Date(second.lastUpdated || 0).getTime() -
+        new Date(first.lastUpdated || 0).getTime()
     );
 }
 

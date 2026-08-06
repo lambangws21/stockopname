@@ -56,6 +56,8 @@ import LowStockAlertModal from "./LowStockAlertModal";
 import { gasGetHistoryWithContext, type GasSheetContext } from "@/lib/gas";
 import { parseChanges } from "@/lib/history";
 import type { HistoryRow } from "@/types/history";
+import type { OnlineHandover } from "@/types/handover";
+import { listOnlineHandovers } from "@/lib/handover";
 import {
   STOCK_IMPLANT_CATEGORY_LABELS,
   STOCK_PROCEDURE_CATEGORIES,
@@ -229,6 +231,7 @@ export default function StockTablePremium({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyNo, setHistoryNo] = useState<number | null>(null);
   const [movementHistory, setMovementHistory] = useState<HistoryRow[]>([]);
+  const [movementDocuments, setMovementDocuments] = useState<OnlineHandover[]>([]);
   const [movementHistoryLoading, setMovementHistoryLoading] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showAllMovements, setShowAllMovements] = useState(false);
@@ -349,15 +352,18 @@ export default function StockTablePremium({
 
     const loadMovementHistory = async () => {
       try {
-        const response = await gasGetHistoryWithContext(
-          sheet,
-          undefined,
-          context
-        );
+        const [response, handovers] = await Promise.all([
+          gasGetHistoryWithContext(sheet, undefined, context),
+          listOnlineHandovers(),
+        ]);
         if (!active) return;
         setMovementHistory(response.data ?? []);
+        setMovementDocuments(handovers);
       } catch {
-        if (active) setMovementHistory([]);
+        if (active) {
+          setMovementHistory([]);
+          setMovementDocuments([]);
+        }
       } finally {
         if (active) setMovementHistoryLoading(false);
       }
@@ -430,31 +436,64 @@ export default function StockTablePremium({
       MOBILISASI_KELUAR: 0,
       MOBILISASI_MASUK: 0,
     } satisfies Record<MovementReason, number>;
-    const outsideByRow = new Map<number, number>();
+    const manualOutsideByRow = new Map<number, number>();
     [...movementEntries].reverse().forEach((movement) => {
       if (movement.reason === "OPERASI") summary.OPERASI += movement.qty;
       if (movement.reason === "REFILL") summary.REFILL += movement.qty;
       if (movement.reason === "MOBILISASI_MASUK") {
         summary.MOBILISASI_MASUK += movement.qty;
       }
-      const current = outsideByRow.get(movement.No) || 0;
+      if (/serah terima\s+ST-|dokumen\s+ST-/i.test(movement.description)) {
+        return;
+      }
+      const current = manualOutsideByRow.get(movement.No) || 0;
       if (movement.reason === "MOBILISASI_KELUAR") {
-        outsideByRow.set(movement.No, current + movement.qty);
+        manualOutsideByRow.set(movement.No, current + movement.qty);
       } else if (movement.reason === "MOBILISASI_MASUK") {
-        outsideByRow.set(movement.No, Math.max(0, current - movement.qty));
-      } else if (
-        movement.reason === "OPERASI" &&
-        /dokumen|rumah sakit|\brs\b/i.test(movement.description)
-      ) {
-        outsideByRow.set(movement.No, Math.max(0, current - movement.qty));
+        manualOutsideByRow.set(movement.No, Math.max(0, current - movement.qty));
       }
     });
-    summary.MOBILISASI_KELUAR = Array.from(outsideByRow.values()).reduce(
+    const visibleByNo = new Map(filteredData.map((row) => [Number(row.No), row]));
+    const visibleByIdentity = new Map(
+      filteredData.map((row) => [
+        `${String(row.NoStok).trim()}|${String(row.Batch || "").trim()}`,
+        row,
+      ])
+    );
+    let documentOutside = 0;
+    movementDocuments
+      .filter((document) => document.Status !== "DRAFT")
+      .forEach((document) => {
+        document.Items.forEach((item) => {
+          const requested = visibleByNo.get(Number(item.stockRow));
+          const row =
+            requested &&
+            String(requested.NoStok) === String(item.partNumber) &&
+            String(requested.Batch || "") === String(item.batch || "")
+              ? requested
+              : visibleByIdentity.get(
+                  `${String(item.partNumber).trim()}|${String(item.batch || "").trim()}`
+                );
+          if (!row) return;
+          const hospitalQty = Math.max(
+            0,
+            Number(item.hospitalQty ?? item.qtyIssued ?? 0) || 0
+          );
+          documentOutside += Math.max(
+            0,
+            hospitalQty -
+              (Number(item.usedQty || 0) || 0) -
+              (Number(item.returnedQty || 0) || 0)
+          );
+        });
+      });
+    const manualOutside = Array.from(manualOutsideByRow.values()).reduce(
       (total, quantity) => total + quantity,
       0
     );
+    summary.MOBILISASI_KELUAR = documentOutside + manualOutside;
     return summary;
-  }, [movementEntries]);
+  }, [filteredData, movementDocuments, movementEntries]);
 
   const lowStockAlertCount = useMemo(
     () =>

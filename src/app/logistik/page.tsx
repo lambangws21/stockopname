@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   ClipboardSignature,
   LoaderCircle,
   LayoutGrid,
@@ -14,7 +15,6 @@ import {
   RefreshCcw,
   Search,
   Table2,
-  Truck,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -41,6 +41,8 @@ export default function LogisticsDashboardPage() {
   const [brand, setBrand] = useState("ALL");
   const [workflow, setWorkflow] = useState("ALL");
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
+  const [focus, setFocus] = useState<"LOW" | "REQUEST" | "ORDERED">("LOW");
+  const [showMovement, setShowMovement] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +62,17 @@ export default function LogisticsDashboardPage() {
   const filtered = useMemo(() => {
     const query = search.toLowerCase().trim();
     return rows.filter((row) => {
+      if (
+        focus === "REQUEST" &&
+        row.WorkflowStatus &&
+        row.WorkflowStatus !== "BELUM DIPROSES" &&
+        row.WorkflowStatus !== "SUDAH DIINFORMASIKAN"
+      ) return false;
+      if (
+        focus === "ORDERED" &&
+        row.WorkflowStatus !== "SEDANG DIPESAN" &&
+        row.WorkflowStatus !== "DALAM PENGIRIMAN"
+      ) return false;
       if (brand !== "ALL" && row.Brand !== brand) return false;
       if (workflow !== "ALL" && row.WorkflowStatus !== workflow) return false;
       if (!query) return true;
@@ -68,7 +81,7 @@ export default function LogisticsDashboardPage() {
         .toLowerCase()
         .includes(query);
     });
-  }, [brand, rows, search, workflow]);
+  }, [brand, focus, rows, search, workflow]);
 
   const summary = useMemo(
     () => ({
@@ -76,10 +89,22 @@ export default function LogisticsDashboardPage() {
       pending: rows.filter(
         (row) => !row.WorkflowStatus || row.WorkflowStatus === "BELUM DIPROSES"
       ).length,
+      request: rows.filter(
+        (row) =>
+          !row.WorkflowStatus ||
+          row.WorkflowStatus === "BELUM DIPROSES" ||
+          row.WorkflowStatus === "SUDAH DIINFORMASIKAN"
+      ).length,
       ordered: rows.filter((row) => row.WorkflowStatus === "SEDANG DIPESAN")
         .length,
       shipping: rows.filter(
         (row) => row.WorkflowStatus === "DALAM PENGIRIMAN"
+      ).length,
+      low: rows.length,
+      requested: rows.filter(
+        (row) =>
+          row.WorkflowStatus === "SEDANG DIPESAN" ||
+          row.WorkflowStatus === "DALAM PENGIRIMAN"
       ).length,
     }),
     [rows]
@@ -141,21 +166,33 @@ export default function LogisticsDashboardPage() {
             Implant inventory
           </p>
           <h1 className="mt-1 text-2xl font-black">Dashboard Logistik</h1>
-          <p className="mt-1 text-xs text-slate-300">
-            Pantau warning, PIC, pemesanan, dan target refill.
-          </p>
+          <p className="mt-1 text-xs text-slate-300">Lihat kebutuhan refill dan progres permintaan dalam satu tampilan.</p>
         </div>
       </header>
 
       <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-6">
-        <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Metric icon={<AlertTriangle size={17} />} label="Stok habis" value={summary.critical} tone="red" />
-          <Metric icon={<UserRound size={17} />} label="Belum diproses" value={summary.pending} tone="amber" />
-          <Metric icon={<PackageCheck size={17} />} label="Sedang dipesan" value={summary.ordered} tone="blue" />
-          <Metric icon={<Truck size={17} />} label="Dalam perjalanan" value={summary.shipping} tone="emerald" />
+        <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+          <div className="border-b p-4">
+            <h2 className="text-sm font-black">Ringkasan pekerjaan</h2>
+            <p className="mt-0.5 text-[11px] text-zinc-500">Pilih ringkasan untuk melihat item yang perlu ditindaklanjuti.</p>
+          </div>
+          <div className="grid gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-3">
+            <SummaryButton active={focus === "LOW"} onClick={() => setFocus("LOW")} icon={<AlertTriangle size={18} />} label="Stok menipis" value={summary.low} detail={`${summary.critical} stok habis`} tone="red" />
+            <SummaryButton active={focus === "REQUEST"} onClick={() => setFocus("REQUEST")} icon={<UserRound size={18} />} label="Perlu diminta" value={summary.request} detail={`${summary.pending} belum diproses`} tone="amber" />
+            <SummaryButton active={focus === "ORDERED"} onClick={() => setFocus("ORDERED")} icon={<PackageCheck size={18} />} label="Sudah diminta" value={summary.requested} detail={`${summary.ordered} dipesan · ${summary.shipping} dikirim`} tone="blue" />
+          </div>
         </section>
 
-        <LogisticsMovementSummary />
+        <details onToggle={(event) => setShowMovement(event.currentTarget.open)} className="group overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+            <div>
+              <h2 className="text-sm font-black">Pergerakan barang & saran refill</h2>
+              <p className="mt-0.5 text-[10px] text-zinc-500">Terpakai, refill masuk, support keluar, dan kembali.</p>
+            </div>
+            <ChevronDown size={18} className="shrink-0 transition-transform group-open:rotate-180" />
+          </summary>
+          {showMovement && <div className="border-t"><LogisticsMovementSummary /></div>}
+        </details>
 
         <section className="grid gap-2 rounded-2xl border bg-white p-3 dark:bg-zinc-900 sm:grid-cols-[1fr_160px_220px_auto]">
           <label className="relative">
@@ -203,6 +240,13 @@ export default function LogisticsDashboardPage() {
             </button>
           </div>
         </section>
+
+        <div className="flex items-end justify-between gap-3 px-1">
+          <div>
+            <h2 className="text-base font-black">{focus === "LOW" ? "Stok menipis" : focus === "REQUEST" ? "Permintaan perlu diproses" : "Stok sudah diminta"}</h2>
+            <p className="text-[10px] text-zinc-500">Menampilkan {filtered.length} item · tekan detail untuk mengubah proses.</p>
+          </div>
+        </div>
 
         {loading ? (
           <div className="flex justify-center py-16"><LoaderCircle className="animate-spin text-blue-600" /></div>
@@ -268,14 +312,16 @@ export default function LogisticsDashboardPage() {
   );
 }
 
-function Metric({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: number; tone: "red" | "amber" | "blue" | "emerald" }) {
+function SummaryButton({ icon, label, value, detail, tone, active, onClick }: { icon: React.ReactNode; label: string; value: number; detail: string; tone: "red" | "amber" | "blue"; active: boolean; onClick: () => void }) {
   const styles = {
-    red: "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300",
-    amber: "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
-    blue: "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300",
-    emerald: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300",
+    red: "text-red-600",
+    amber: "text-amber-600",
+    blue: "text-blue-600",
   };
-  return <article className={`rounded-2xl border p-3.5 ${styles[tone]}`}><div className="flex items-center justify-between">{icon}<b className="text-2xl">{value}</b></div><p className="mt-3 text-[10px] font-bold uppercase">{label}</p></article>;
+  return <button type="button" onClick={onClick} className={`bg-white p-4 text-left transition dark:bg-zinc-900 ${active ? "inset-ring-2 inset-ring-blue-600" : "hover:bg-slate-50 dark:hover:bg-zinc-800"}`}>
+    <div className="flex items-center justify-between"><span className={styles[tone]}>{icon}</span><b className="text-2xl">{value}</b></div>
+    <p className="mt-3 text-xs font-black">{label}</p><p className="mt-0.5 text-[10px] text-zinc-500">{detail}</p>
+  </button>;
 }
 
 function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: boolean; onSave: (patch: Partial<StockWarningRow>) => void }) {
@@ -303,7 +349,18 @@ function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: 
           <div className={`rounded-xl px-3 py-2 text-center ${critical ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}><b className="text-xl">{row.SisaStock}</b><p className="text-[8px] font-bold">SISA</p></div>
         </div>
 
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-2 dark:bg-zinc-950">
+          <div><p className="text-[8px] font-bold uppercase text-zinc-400">Proses</p><p className="mt-1 truncate text-[10px] font-black">{status}</p></div>
+          <div><p className="text-[8px] font-bold uppercase text-zinc-400">PIC</p><p className="mt-1 truncate text-[10px] font-black">{pic || "Belum ada"}</p></div>
+          <div><p className="text-[8px] font-bold uppercase text-zinc-400">Target</p><p className="mt-1 truncate text-[10px] font-black">{target || "Belum ada"}</p></div>
+        </div>
+
+        <details className="group mt-3 rounded-xl border">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-3 text-xs font-bold">
+            Ubah proses permintaan
+            <ChevronDown size={16} className="transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="grid gap-2 border-t p-3 sm:grid-cols-2">
           <label className="text-[10px] font-bold text-zinc-500">Status proses
             <select value={status} onChange={(event) => setStatus(event.target.value as LogisticsWorkflowStatus)} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm dark:bg-zinc-900">
               {WORKFLOW_OPTIONS.map((item) => <option key={item}>{item}</option>)}
@@ -318,9 +375,9 @@ function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: 
           <label className="text-[10px] font-bold text-zinc-500">Catatan
             <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Supplier / kebutuhan operasi" className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm" />
           </label>
-        </div>
+          </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:grid-cols-3">
           <button type="button" disabled={saving} onClick={() => onSave({ WorkflowStatus: status, PIC: pic, TargetRefill: target, LogisticsNote: note })} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white disabled:opacity-50">
             {saving ? <LoaderCircle size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Simpan
           </button>
@@ -330,7 +387,8 @@ function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: 
           <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer")} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white sm:col-span-1">
             <MessageCircle size={15} /> WhatsApp
           </button>
-        </div>
+          </div>
+        </details>
         {row.InformedAt && <p className="mt-3 text-[10px] text-zinc-400">Sudah diinformasikan oleh {row.InformedBy || "Logistik"}.</p>}
       </div>
     </article>

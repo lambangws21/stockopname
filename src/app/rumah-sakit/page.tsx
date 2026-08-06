@@ -57,29 +57,40 @@ export default function HospitalStockPage() {
     void load();
   }, [load]);
 
+  const documentsWithStock = useMemo(
+    () =>
+      documents.filter(
+        (document) =>
+          Boolean(document.InventoryPostedAt) &&
+          document.Items.some((item) => getRemaining(item) > 0)
+      ),
+    [documents]
+  );
+
   const hospitalNames = useMemo(
     () =>
       Array.from(
         new Set(
-          documents
-            .filter((document) => document.InventoryPostedAt)
-            .map((document) => document.Hospital)
+          documentsWithStock
+            .map((document) => String(document.Hospital || "").trim())
             .filter(Boolean)
         )
       ).sort(),
-    [documents]
+    [documentsWithStock]
   );
 
   const activeDocuments = useMemo(
     () =>
-      documents.filter((document) => {
-        if (!document.InventoryPostedAt) return false;
-        if (hospitalFilter !== "ALL" && document.Hospital !== hospitalFilter) {
+      documentsWithStock.filter((document) => {
+        if (
+          hospitalFilter !== "ALL" &&
+          String(document.Hospital || "").trim() !== hospitalFilter
+        ) {
           return false;
         }
-        return document.Items.some((item) => getRemaining(item) > 0);
+        return true;
       }),
-    [documents, hospitalFilter]
+    [documentsWithStock, hospitalFilter]
   );
 
   const selectedDocument =
@@ -215,11 +226,20 @@ export default function HospitalStockPage() {
       });
       if (result.data) {
         const updatedDocument = result.data;
-        setDocuments((current) =>
-          current.map((document) =>
-            document.ID === updatedDocument.ID ? updatedDocument : document
-          )
+        const nextDocuments = documents.map((document) =>
+          document.ID === updatedDocument.ID ? updatedDocument : document
         );
+        setDocuments(nextDocuments);
+        const selectedHospital = String(
+          selectedDocument.Hospital || ""
+        ).trim();
+        const hospitalStillHasStock = nextDocuments.some(
+          (document) =>
+            String(document.Hospital || "").trim() === selectedHospital &&
+            Boolean(document.InventoryPostedAt) &&
+            document.Items.some((item) => getRemaining(item) > 0)
+        );
+        if (!hospitalStillHasStock) setHospitalFilter("ALL");
       }
       setUsedKeys([]);
       setDocumentId("");
