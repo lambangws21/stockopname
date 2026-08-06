@@ -15,6 +15,7 @@ import {
 import { StockRow } from "@/types/stock";
 import { useStockMutation } from "@/hooks/useStockMutation";
 import type { GasSheetContext } from "@/lib/gas";
+import { isSupportCenterStock } from "@/lib/stockStatus";
 
 type MovementReason =
   | "REFILL"
@@ -81,6 +82,10 @@ export default function MutateModal({
     useState<MovementReason | null>(null);
   const [qty, setQty] = useState(1);
   const [note, setNote] = useState("");
+  const [doctor, setDoctor] = useState("");
+  const [operationDate, setOperationDate] = useState("");
+  const [procedure, setProcedure] = useState("");
+  const [hospital, setHospital] = useState("");
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
@@ -91,7 +96,11 @@ export default function MutateModal({
   );
   const isStockIn =
     selectedReason === "REFILL" || selectedReason === "MOBILISASI_MASUK";
-  const nextStock = isStockIn
+  const supportPusat = isSupportCenterStock(row);
+  const changesOfficeStock = !supportPusat;
+  const nextStock = !changesOfficeStock
+    ? row.TotalQty
+    : isStockIn
     ? row.TotalQty + qty
     : Math.max(0, row.TotalQty - qty);
 
@@ -99,6 +108,10 @@ export default function MutateModal({
     setSelectedReason(null);
     setQty(1);
     setNote("");
+    setDoctor("");
+    setOperationDate("");
+    setProcedure("");
+    setHospital("");
     setErrMsg(null);
   };
 
@@ -120,8 +133,16 @@ export default function MutateModal({
       setErrMsg("Jumlah minimal 1");
       return;
     }
-    if (!isStockIn && qty > row.TotalQty) {
+    if (!isStockIn && changesOfficeStock && qty > row.TotalQty) {
       setErrMsg("Jumlah melebihi stok yang tersedia");
+      return;
+    }
+
+    if (
+      selectedReason === "OPERASI" &&
+      (!doctor.trim() || !operationDate || !procedure || !hospital.trim())
+    ) {
+      setErrMsg("Dokter, tanggal, jenis tindakan, dan rumah sakit wajib diisi");
       return;
     }
 
@@ -132,10 +153,18 @@ export default function MutateModal({
     }
 
     const safeNote =
-      note.trim() ||
-      (selectedReason === "OPERASI"
-        ? "Terpakai untuk operasi"
-        : "Refill stok");
+      selectedReason === "OPERASI"
+        ? [
+            supportPusat ? "SUPPORT PUSAT" : "STOK OFFICE",
+            `Dokter: ${doctor.trim()}`,
+            `Tanggal: ${operationDate}`,
+            `Tindakan: ${procedure}`,
+            `RS: ${hospital.trim()}`,
+            note.trim(),
+          ]
+            .filter(Boolean)
+            .join(" • ")
+        : note.trim() || "Refill stok";
 
     setLoading(true);
     setErrMsg(null);
@@ -205,6 +234,15 @@ export default function MutateModal({
               <span className="font-bold text-zinc-900 dark:text-white">
                 Stok {row.TotalQty}
               </span>
+              <span
+                className={`rounded-full px-2 py-0.5 font-bold ${
+                  supportPusat
+                    ? "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
+                    : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                }`}
+              >
+                {supportPusat ? "Support Pusat" : "Stok Office"}
+              </span>
             </div>
           </div>
 
@@ -265,7 +303,7 @@ export default function MutateModal({
                   <input
                     type="number"
                     min={1}
-                    max={isStockIn ? undefined : row.TotalQty}
+                    max={isStockIn || supportPusat ? undefined : row.TotalQty}
                     value={qty}
                     onChange={(event) =>
                       setQty(Math.max(1, Number(event.target.value) || 1))
@@ -292,11 +330,15 @@ export default function MutateModal({
                 <div className="text-zinc-400">→</div>
                 <div>
                   <div className="text-[10px] uppercase text-zinc-500">
-                    Setelah disimpan
+                    {supportPusat ? "Stok office tetap" : "Setelah disimpan"}
                   </div>
                   <div
                     className={`text-xl font-black ${
-                      isStockIn ? "text-emerald-600" : "text-rose-600"
+                      supportPusat
+                        ? "text-violet-600"
+                        : isStockIn
+                        ? "text-emerald-600"
+                        : "text-rose-600"
                     }`}
                   >
                     {nextStock}
@@ -304,7 +346,7 @@ export default function MutateModal({
                 </div>
               </div>
 
-              {!isStockIn && nextStock === 0 && (
+              {!supportPusat && !isStockIn && nextStock === 0 && (
                 <div className="flex gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
                   <AlertTriangle size={18} className="mt-0.5 shrink-0" />
                   <div>
@@ -317,10 +359,58 @@ export default function MutateModal({
                 </div>
               )}
 
+              {selectedReason === "OPERASI" && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-semibold">
+                    Dokter
+                    <input
+                      value={doctor}
+                      onChange={(event) => setDoctor(event.target.value)}
+                      placeholder="Nama dokter operator"
+                      className="mt-1.5 w-full rounded-xl border px-3 py-2.5 font-normal dark:bg-zinc-800"
+                    />
+                  </label>
+                  <label className="text-sm font-semibold">
+                    Tanggal tindakan
+                    <input
+                      type="date"
+                      value={operationDate}
+                      onChange={(event) => setOperationDate(event.target.value)}
+                      className="mt-1.5 w-full rounded-xl border px-3 py-2.5 font-normal dark:bg-zinc-800"
+                    />
+                  </label>
+                  <label className="text-sm font-semibold">
+                    Jenis tindakan
+                    <select
+                      value={procedure}
+                      onChange={(event) => setProcedure(event.target.value)}
+                      className="mt-1.5 w-full rounded-xl border px-3 py-2.5 font-normal dark:bg-zinc-800"
+                    >
+                      <option value="">Pilih tindakan</option>
+                      <option value="TKR">TKR</option>
+                      <option value="THR">THR</option>
+                      <option value="BIPOLAR">Bipolar</option>
+                      <option value="LAINNYA">Lainnya</option>
+                    </select>
+                  </label>
+                  <label className="text-sm font-semibold">
+                    Rumah sakit
+                    <input
+                      value={hospital}
+                      onChange={(event) => setHospital(event.target.value)}
+                      placeholder="Nama rumah sakit"
+                      className="mt-1.5 w-full rounded-xl border px-3 py-2.5 font-normal dark:bg-zinc-800"
+                    />
+                  </label>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1.5 block text-sm font-semibold">
                   {selectedReason.includes("MOBILISASI")
                     ? "Cabang tujuan/asal"
+                    : selectedReason === "OPERASI"
+                    ? "Catatan tambahan (opsional)"
                     : "Keterangan (opsional)"}
                 </label>
                 <textarea

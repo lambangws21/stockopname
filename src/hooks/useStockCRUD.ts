@@ -37,6 +37,8 @@ function buildSignature(rows: StockRow[]) {
       r.TERPAKAI,
       r.REFILL,
       r.KET,
+      r.Discontinue,
+      r.SupplySource,
     ])
   );
 }
@@ -137,6 +139,8 @@ export function useStockCRUD({
         TERPAKAI: row.TERPAKAI,
         REFILL: row.REFILL,
         KET: row.KET,
+        Discontinue: Boolean(row.Discontinue),
+        SupplySource: row.SupplySource || "OFFICE",
       });
 
       await reloadWithOptions({ silent: true, source: "local" });
@@ -175,6 +179,8 @@ export function useStockCRUD({
         TERPAKAI: row.TERPAKAI,
         REFILL: row.REFILL,
         KET: row.KET,
+        Discontinue: Boolean(row.Discontinue),
+        SupplySource: row.SupplySource || "OFFICE",
       });
       await reloadWithOptions({ silent: true, source: "local" });
     } catch (err) {

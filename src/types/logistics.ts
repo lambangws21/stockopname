@@ -3,12 +3,13 @@ export type LogisticsWorkflowStatus =
   | "SUDAH DIINFORMASIKAN"
   | "SEDANG DIPESAN"
   | "DALAM PENGIRIMAN"
-  | "SELESAI";
+  | "SELESAI"
+  | "DISCONTINUE";
 
 export interface StockWarningRow {
   Row: number;
   UpdatedAt: string;
-  Status: "HABIS" | "AKAN HABIS" | "SELESAI";
+  Status: "HABIS" | "AKAN HABIS" | "SELESAI" | "DISCONTINUE";
   StockSheet: string;
   No: number;
   NoStok: string;

@@ -476,9 +476,9 @@ export default function HospitalStockPage() {
         {selectedDocument && hasMoreItems && (
           <div
             ref={loadMoreRef}
-            className="flex h-16 items-center justify-center"
+            className="py-2"
           >
-            <LoaderCircle size={20} className="animate-spin text-blue-600" />
+            <HospitalStockSkeleton compact />
           </div>
         )}
       </div>
@@ -738,10 +738,10 @@ function EmptyState() {
   );
 }
 
-function HospitalStockSkeleton() {
+function HospitalStockSkeleton({ compact = false }: { compact?: boolean }) {
   return (
     <section className="grid gap-2 lg:grid-cols-2" aria-label="Memuat implant">
-      {Array.from({ length: 6 }).map((_item, index) => (
+      {Array.from({ length: compact ? 2 : 6 }).map((_item, index) => (
         <div
           key={index}
           className="animate-pulse rounded-2xl border bg-white p-3 dark:bg-zinc-900"

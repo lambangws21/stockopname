@@ -443,24 +443,16 @@ function sumReason(entries: MovementEntry[], reason: MovementReason) {
 
 function buildRefillRequestMessage(items: UsedSummary[], days: number) {
   const lines = [
-    "📦 *PERMINTAAN REFILL IMPLANT*",
-    `Periode: ${days ? `${days} hari terakhir` : "Semua riwayat"}`,
+    "📦 *REFILL IMPLANT TERPAKAI*",
+    `${days ? `${days} hari terakhir` : "Semua riwayat"} • ${items.length} item`,
     "",
   ];
   items.forEach((item, index) => {
     lines.push(
-      `${index + 1}. ${item.row?.NoStok || item.key} | ${
-        item.row?.Deskripsi || "-"
-      }`,
-      `   ${item.row?.Brand || "-"} | ${item.row?.Implant || "-"} | LOT ${
-        item.row?.Batch || "-"
-      }`,
-      `   Terpakai: ${item.totalUsed} pcs | Stok: ${Number(
-        item.row?.TotalQty || 0
-      )} pcs | Permintaan refill: ${item.suggestedRefill} pcs`
+      `${index + 1}. ${item.row?.Brand || "-"} • ${item.row?.NoStok || item.key} • refill ${item.suggestedRefill} pcs`
     );
   });
-  lines.push("", "Mohon diproses untuk menjaga ketersediaan kebutuhan operasi.");
+  lines.push("", "Mohon diproses.");
   return lines.join("\n");
 }
 

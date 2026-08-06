@@ -73,6 +73,7 @@ export async function printHandoverDocument(
       <div><b>Tindakan</b>: ${escapeHtml(handover.Procedure)}</div>
       <div><b>Dokter</b>: ${escapeHtml(handover.Surgeon || "-")}</div>
       <div><b>Brand</b>: ${escapeHtml(handover.Brand)}</div>
+      <div><b>Bearing</b>: ${escapeHtml(handover.BearingOption || "-")}</div>
       <div><b>Tanggal</b>: ${escapeHtml(handover.HandoverDate || "-")}</div>
       <div><b>Set / Box</b>: ${escapeHtml(handover.SetName || "-")}</div>
     </section>

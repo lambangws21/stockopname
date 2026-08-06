@@ -10,6 +10,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   ArrowDown,
@@ -46,25 +47,45 @@ import {
   settleOnlineHandover,
 } from "@/lib/handover";
 import type { StockRow } from "@/types/stock";
+import { isDiscontinuedStock } from "@/lib/stockStatus";
 import type {
   HandoverInstrument,
   HandoverItem,
+  HandoverBearingOption,
   HandoverProcedure,
   HandoverSignatureAudit,
   OnlineHandover,
 } from "@/types/handover";
 
-const PROCEDURES: HandoverProcedure[] = ["TKR", "THR", "BIPOLAR"];
+const PROCEDURES: HandoverProcedure[] = [
+  "TKR",
+  "TKR VANGUARD",
+  "UKA",
+  "TKR PERSONA",
+  "THR",
+  "BIPOLAR",
+];
 const BRANDS = ["NORMMED", "ZIMMER"] as const;
 type HandoverBrand = (typeof BRANDS)[number];
+
+function proceduresForBrand(brand: HandoverBrand): HandoverProcedure[] {
+  return brand === "ZIMMER"
+    ? PROCEDURES
+    : ["TKR", "THR", "BIPOLAR"];
+}
+
+function procedureForBrand(
+  procedure: HandoverProcedure,
+  brand: HandoverBrand
+): HandoverProcedure {
+  return proceduresForBrand(brand).includes(procedure) ? procedure : "TKR";
+}
 
 export default function OnlineHandoverPage() {
   return (
     <Suspense
       fallback={
-        <main className="flex min-h-dvh items-center justify-center bg-slate-50">
-          <LoaderCircle className="animate-spin text-blue-600" />
-        </main>
+        <HandoverPageSkeleton />
       }
     >
       <OnlineHandoverContent />
@@ -84,7 +105,12 @@ function OnlineHandoverContent() {
   );
   const [stock, setStock] = useState<StockRow[]>([]);
   const [documents, setDocuments] = useState<OnlineHandover[]>([]);
-  const [form, setForm] = useState<OnlineHandover>(() => emptyHandover("TKR"));
+  // Tanggal awal dikosongkan agar HTML server dan client selalu identik.
+  // Data/tanggal aktual diisi setelah katalog dimuat pada client.
+  const [form, setForm] = useState<OnlineHandover>(() => ({
+    ...emptyHandover("TKR"),
+    HandoverDate: "",
+  }));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState("");
@@ -203,6 +229,22 @@ function OnlineHandoverContent() {
   }, [form.Items, itemSearch]);
 
   const selectedItems = form.Items.filter((item) => item.selected);
+  const procedureChoices = proceduresForBrand(normalizeBrand(form.Brand));
+  const brandItemCounts = useMemo(
+    () =>
+      Object.fromEntries(
+        BRANDS.map((brand) => [
+          brand,
+          stock.filter(
+            (row) =>
+              !isDiscontinuedStock(row) &&
+              matchesHandoverBrand(row, brand) &&
+              matchesProcedure(row, procedureForBrand(form.Procedure, brand))
+          ).length,
+        ])
+      ) as Record<HandoverBrand, number>,
+    [form.Procedure, stock]
+  );
   const renderedItems = filteredItems.slice(0, visibleItemCount);
   const hasMoreItems = visibleItemCount < filteredItems.length;
   const issuedTotal = selectedItems.reduce(
@@ -216,7 +258,9 @@ function OnlineHandoverContent() {
         .filter((row) => row > 0)
     );
     return stock.filter(
-      (row) => !currentRows.has(Number(row.No || 0))
+      (row) =>
+        !isDiscontinuedStock(row) &&
+        !currentRows.has(Number(row.No || 0))
     );
   }, [form.Items, stock]);
   const filteredAdditionalStockItems = useMemo(() => {
@@ -325,7 +369,12 @@ function OnlineHandoverContent() {
 
   function changeProcedure(procedure: HandoverProcedure) {
     const brand = normalizeBrand(form.Brand);
-    const next = buildHandoverFromStock(procedure, brand, stock);
+    const next = buildHandoverFromStock(
+      procedure,
+      brand,
+      stock,
+      defaultBearingOption(procedure, brand)
+    );
     setForm({
       ...next,
       Hospital: form.Hospital,
@@ -341,13 +390,41 @@ function OnlineHandoverContent() {
   }
 
   function changeBrand(brand: HandoverBrand) {
-    const next = buildHandoverFromStock(form.Procedure, brand, stock);
+    const procedure = procedureForBrand(form.Procedure, brand);
+    const next = buildHandoverFromStock(
+      procedure,
+      brand,
+      stock,
+      defaultBearingOption(procedure, brand)
+    );
     setForm({
       ...next,
       Hospital: form.Hospital,
       Surgeon: form.Surgeon,
       ApprovedBy: form.ApprovedBy,
       HandoverDate: form.HandoverDate,
+      Sender: form.Sender,
+      Checker1: form.Checker1,
+      Checker2: form.Checker2,
+      AcknowledgedBy: form.AcknowledgedBy,
+    });
+    setVisibleItemCount(30);
+  }
+
+  function changeBearingOption(option: HandoverBearingOption) {
+    const next = buildHandoverFromStock(
+      form.Procedure,
+      normalizeBrand(form.Brand),
+      stock,
+      option
+    );
+    setForm({
+      ...next,
+      Hospital: form.Hospital,
+      Surgeon: form.Surgeon,
+      ApprovedBy: form.ApprovedBy,
+      HandoverDate: form.HandoverDate,
+      SetName: form.SetName,
       Sender: form.Sender,
       Checker1: form.Checker1,
       Checker2: form.Checker2,
@@ -594,17 +671,11 @@ function OnlineHandoverContent() {
       (item) => item.selected
     ).length;
     return [
-      "Informasi pengiriman implant & instrument",
-      "",
-      `Logistik: ${form.Sender || "-"}`,
-      `Rumah Sakit: ${form.Hospital || "-"}`,
-      `Tindakan: ${form.Procedure}`,
-      `Brand: ${normalizeBrand(form.Brand)}`,
-      `Implant: ${implantCount} item`,
-      `Instrument: ${instrumentCount} item`,
-      "",
-      "Implant dan instrument telah dikirim oleh tim logistik.",
-      "Silakan buka link berikut untuk melihat detail dan melakukan penerimaan:",
+      "📦 *SERAH TERIMA IMPLANT*",
+      `RS: ${form.Hospital || "-"}`,
+      `${form.Procedure} • ${normalizeBrand(form.Brand)}${form.BearingOption ? ` • ${form.BearingOption}` : ""}`,
+      `${implantCount} implant • ${instrumentCount} instrument`,
+      "Detail & penerimaan:",
       getShareUrl(),
     ].join("\n");
   }
@@ -727,7 +798,7 @@ function OnlineHandoverContent() {
 
   return (
     <main className="min-h-dvh bg-slate-50 pb-28 text-zinc-950 dark:bg-zinc-950 dark:text-white sm:pb-10">
-      <header className="sticky top-0 z-40 bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white shadow-lg shadow-slate-950/10 sm:px-6">
+      <header className="sticky top-0 z-40 bg-[#0f172a] px-4 pb-3 pt-[max(0.65rem,env(safe-area-inset-top))] text-white shadow-lg shadow-slate-950/10 sm:px-6 sm:pb-4 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="mx-auto max-w-[1600px]">
           <div className="flex items-center justify-between">
             <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
@@ -760,13 +831,13 @@ function OnlineHandoverContent() {
               </Link>
             </div>
           </div>
-          <div className="mt-4 flex items-center gap-3">
-            <span className="flex size-11 items-center justify-center rounded-xl bg-white/10">
+          <div className="mt-3 flex items-center gap-3 sm:mt-4">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-white/10 sm:size-11">
               <ClipboardSignature size={21} />
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">Dokumen digital</p>
-              <h1 className="text-xl font-black">Serah Terima Online</h1>
+              <h1 className="text-lg font-black sm:text-xl">Serah Terima Online</h1>
               <p className="mt-1 truncate text-[10px] text-slate-400">
                 {form.ID || "Dokumen baru"}
               </p>
@@ -777,7 +848,7 @@ function OnlineHandoverContent() {
       </header>
 
       {loading ? (
-        <div className="flex justify-center py-20"><LoaderCircle className="animate-spin text-blue-600" /></div>
+        <HandoverPageSkeleton embedded />
       ) : (
         <div className="mx-auto grid max-w-[1600px] gap-4 px-3 py-3 sm:p-6 xl:grid-cols-[260px_minmax(0,1fr)]">
           <div className="order-1 min-w-0 space-y-4 xl:order-2">
@@ -805,37 +876,40 @@ function OnlineHandoverContent() {
                 </button>
               </section>
             )}
-            <nav className="sticky top-[118px] z-30 -mx-1 grid grid-cols-3 gap-1 rounded-2xl border bg-white/95 p-1.5 shadow-lg backdrop-blur sm:hidden dark:bg-zinc-900/95">
+            <nav className="sticky top-[104px] z-30 -mx-1 grid grid-cols-3 gap-1 rounded-xl border bg-white/95 p-1 shadow-lg backdrop-blur sm:hidden dark:bg-zinc-900/95">
               {[
                 ["info", "1. Info RS"],
                 ["items", `2. Item (${form.Items.length})`],
                 ["signature", "3. TTD"],
               ].map(([step, label]) => (
-                <button
+                <motion.button
                   key={step}
                   type="button"
+                  whileTap={{ scale: 0.96 }}
                   onClick={() =>
                     goToMobileStep(
                       step as "info" | "items" | "signature"
                     )
                   }
-                  className={`h-10 rounded-xl text-[9px] font-black transition ${
+                  className={`h-9 rounded-lg text-[9px] font-black transition ${
                     mobileStep === step
                       ? "bg-blue-600 text-white shadow-sm"
                       : "text-zinc-500"
                   }`}
                 >
                   {label}
-                </button>
+                </motion.button>
               ))}
             </nav>
 
-            <section id="handover-info" className="scroll-mt-44 rounded-2xl border bg-white p-4 shadow-sm dark:bg-zinc-900">
-              <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
-                {PROCEDURES.map((procedure) => (
-                  <button
+            <section id="handover-info" className="scroll-mt-40 rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 sm:scroll-mt-44 sm:p-4">
+              <div className={`grid gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800 ${procedureChoices.length <= 3 ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"}`}>
+                {procedureChoices.map((procedure) => (
+                  <motion.button
                     key={procedure}
                     type="button"
+                    layout
+                    whileTap={{ scale: 0.96 }}
                     disabled={Boolean(form.ID)}
                     onClick={() => changeProcedure(procedure)}
                     className={`h-10 rounded-lg px-3 text-xs font-black transition ${
@@ -845,7 +919,7 @@ function OnlineHandoverContent() {
                     }`}
                   >
                     {procedure}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
               <div className="mt-3 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)] lg:items-end">
@@ -855,12 +929,14 @@ function OnlineHandoverContent() {
                 </p>
                 <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
                   {BRANDS.map((brand) => (
-                    <button
+                    <motion.button
                       key={brand}
                       type="button"
+                      layout
+                      whileTap={{ scale: 0.97 }}
                       disabled={Boolean(form.ID)}
                       onClick={() => changeBrand(brand)}
-                      className={`h-10 rounded-lg text-xs font-black transition ${
+                      className={`flex h-11 flex-col items-center justify-center rounded-lg text-[11px] font-black leading-4 transition ${
                         normalizeBrand(form.Brand) === brand
                           ? brand === "NORMMED"
                             ? "bg-emerald-600 text-white shadow-sm"
@@ -868,10 +944,41 @@ function OnlineHandoverContent() {
                           : "text-zinc-500"
                       }`}
                     >
-                      {brand === "NORMMED" ? "Normmed" : "Zimmer"}
-                    </button>
+                      <span>{brand === "NORMMED" ? "Normmed" : "Zimmer"}</span>
+                      <span className="text-[8px] font-semibold opacity-80">{brandItemCounts[brand]} item</span>
+                    </motion.button>
                   ))}
                 </div>
+                <AnimatePresence initial={false}>
+                {normalizeBrand(form.Brand) === "ZIMMER" &&
+                  (form.Procedure === "THR" || form.Procedure === "BIPOLAR") && (
+                    <motion.div
+                      key={`bearing-${form.Procedure}`}
+                      initial={{ opacity: 0, height: 0, y: -6 }}
+                      animate={{ opacity: 1, height: "auto", y: 0 }}
+                      exit={{ opacity: 0, height: 0, y: -6 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      className="mt-3 overflow-hidden"
+                    >
+                      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-500">Bearing option</p>
+                      <div className={`grid gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800 ${form.Procedure === "THR" ? "grid-cols-3" : "grid-cols-2"}`}>
+                        {bearingOptions(form.Procedure).map((option) => (
+                          <motion.button
+                            key={option.value}
+                            type="button"
+                            whileTap={{ scale: 0.96 }}
+                            disabled={Boolean(form.ID)}
+                            onClick={() => changeBearingOption(option.value)}
+                            className={`min-h-12 rounded-lg px-1 py-1.5 text-center transition ${form.BearingOption === option.value ? "bg-violet-600 text-white shadow-sm" : "text-zinc-500 hover:bg-white dark:hover:bg-zinc-700"}`}
+                          >
+                            <span className="block text-[11px] font-black">{option.value}</span>
+                            <span className="mt-0.5 block text-[7px] font-semibold leading-3 opacity-80">{option.label}</span>
+                          </motion.button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <TextField label="Hospital" value={form.Hospital} onChange={(Hospital) => setForm({ ...form, Hospital })} />
@@ -882,7 +989,7 @@ function OnlineHandoverContent() {
                 <div className="rounded-xl border bg-slate-50 px-3 py-2 dark:bg-zinc-800">
                   <p className="text-[10px] font-bold text-zinc-500">Kelompok data</p>
                   <p className="mt-1 text-sm font-black">
-                    {form.Procedure} · {normalizeBrand(form.Brand)}
+                    {form.Procedure} · {normalizeBrand(form.Brand)}{form.BearingOption ? ` · ${form.BearingOption}` : ""}
                   </p>
                 </div>
               </div>
@@ -891,7 +998,14 @@ function OnlineHandoverContent() {
 
             <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.8fr)]">
               <div className="min-w-0 space-y-4">
-            <section id="handover-items" className="scroll-mt-44 overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
+            <motion.section
+              key={`handover-items-${normalizeBrand(form.Brand)}-${form.Procedure}-${form.BearingOption || "default"}`}
+              id="handover-items"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: "easeOut" }}
+              className="scroll-mt-44 overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900"
+            >
               <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
                 <div>
                   <button
@@ -907,7 +1021,14 @@ function OnlineHandoverContent() {
                   </button>
                   <p className="text-[10px] text-zinc-500">{selectedItems.length} dipilih · {issuedTotal} pcs dikeluarkan</p>
                 </div>
-                <div className={`${mobileItemsOpen ? "grid" : "hidden"} w-full grid-cols-[auto_auto_1fr] gap-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-end`}>
+                <div className={`${mobileItemsOpen ? "grid" : "hidden"} w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end`}>
+                  <label className="relative col-span-2 min-w-0 sm:order-none sm:w-64">
+                    <Search className="absolute left-3 top-3.5 text-zinc-400" size={14} />
+                    <input value={itemSearch} onChange={(event) => {
+                      setItemSearch(event.target.value);
+                      setVisibleItemCount(30);
+                    }} placeholder={`Cari item ${normalizeBrand(form.Brand)}...`} className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-2 text-xs" />
+                  </label>
                   <button
                     type="button"
                     onClick={() =>
@@ -918,7 +1039,7 @@ function OnlineHandoverContent() {
                         ),
                       })
                     }
-                    className="h-11 rounded-xl border px-2 text-[9px] font-bold"
+                    className="h-10 rounded-xl border px-2 text-[9px] font-bold sm:h-11"
                   >
                     Pilih semua
                   </button>
@@ -932,17 +1053,10 @@ function OnlineHandoverContent() {
                         ),
                       })
                     }
-                    className="h-11 rounded-xl border px-2 text-[9px] font-bold text-red-600"
+                    className="h-10 rounded-xl border px-2 text-[9px] font-bold text-red-600 sm:h-11"
                   >
                     Kosongkan
                   </button>
-                  <label className="relative min-w-0 sm:w-64">
-                    <Search className="absolute left-3 top-3.5 text-zinc-400" size={14} />
-                    <input value={itemSearch} onChange={(event) => {
-                      setItemSearch(event.target.value);
-                      setVisibleItemCount(30);
-                    }} placeholder="Cari REF..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-2 text-xs" />
-                  </label>
                   <button
                     type="button"
                     disabled={Boolean(form.ID) && !supplementBase}
@@ -950,7 +1064,7 @@ function OnlineHandoverContent() {
                       setVisibleAccessoryCount(30);
                       setAccessoryModalOpen(true);
                     }}
-                    className="col-span-3 inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border bg-white px-3 text-[10px] font-bold text-blue-700 disabled:opacity-40 sm:col-span-1 dark:bg-zinc-900"
+                    className="col-span-2 inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border bg-blue-50 px-3 text-[10px] font-bold text-blue-700 disabled:opacity-40 sm:col-span-1 sm:h-11 sm:bg-white dark:bg-blue-950/30 dark:sm:bg-zinc-900"
                   >
                     <Plus size={14} /> Tambah aksesori
                   </button>
@@ -958,6 +1072,10 @@ function OnlineHandoverContent() {
               </div>
 
               <div className={`${mobileItemsOpen ? "space-y-2 p-2" : "hidden"} lg:hidden`}>
+                <div className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-[9px] font-bold text-zinc-500 dark:bg-zinc-800">
+                  <span>{normalizeBrand(form.Brand)} · {form.Procedure}</span>
+                  <span>{filteredItems.length} item · {selectedItems.length} dipilih</span>
+                </div>
                 {renderedItems.map(({ item, index }) => (
                   <HandoverItemCard
                     key={`${item.partNumber}-${item.batch}-${index}`}
@@ -989,18 +1107,13 @@ function OnlineHandoverContent() {
               {hasMoreItems && (
                 <div
                   ref={itemLoadMoreRef}
-                  className="flex h-16 items-center justify-center border-t"
+                  className="grid gap-2 border-t p-2 lg:grid-cols-2"
                 >
-                  <LoaderCircle
-                    size={20}
-                    className="animate-spin text-blue-600"
-                  />
-                  <span className="ml-2 text-[10px] font-bold text-zinc-500">
-                    Memuat implant berikutnya...
-                  </span>
+                  <LazyItemSkeleton />
+                  <LazyItemSkeleton />
                 </div>
               )}
-            </section>
+            </motion.section>
 
             {form.InventoryPostedAt && (
               <HospitalInventorySection
@@ -1383,15 +1496,10 @@ function OnlineHandoverContent() {
               {hasMoreAdditionalItems && (
                 <div
                   ref={accessoryLoadMoreRef}
-                  className="flex h-14 items-center justify-center"
+                  className="grid gap-2 py-2 sm:grid-cols-2"
                 >
-                  <LoaderCircle
-                    size={18}
-                    className="animate-spin text-blue-600"
-                  />
-                  <span className="ml-2 text-[10px] font-bold text-zinc-500">
-                    Memuat item berikutnya...
-                  </span>
+                  <LazyItemSkeleton />
+                  <LazyItemSkeleton />
                 </div>
               )}
             </div>
@@ -1454,6 +1562,9 @@ function OnlineHandoverContent() {
                   label="Brand"
                   value={normalizeBrand(form.Brand)}
                 />
+                {form.BearingOption && (
+                  <ShareInfo label="Bearing" value={form.BearingOption} />
+                )}
                 <ShareInfo label="Dikirim oleh" value={form.Sender || "-"} />
               </div>
 
@@ -1550,8 +1661,11 @@ function ShareInfo({ label, value }: { label: string; value: string }) {
 }
 
 function normalizeHandoverDocument(document: OnlineHandover): OnlineHandover {
+  const brand = normalizeBrand(document.Brand);
   return {
     ...document,
+    BearingOption:
+      document.BearingOption || defaultBearingOption(document.Procedure, brand),
     HandoverDate: normalizeDateInput(document.HandoverDate),
   };
 }
@@ -1582,8 +1696,9 @@ function normalizeDateInput(value: string | undefined) {
 
 function HandoverItemRow({ item, onChange }: { item: HandoverItem; onChange: (item: HandoverItem) => void }) {
   const officeStock = itemOfficeStock(item);
+  const supportPusat = normalizeSupplySource(item.supplySource) === "SUPPORT PUSAT";
   const stockWarning = officeStock < item.stdQty;
-  return <tr className={`border-t ${stockWarning ? "bg-[#FEF2F2] text-red-900 outline outline-1 -outline-offset-1 outline-red-300 dark:bg-red-950/25 dark:text-red-100 dark:outline-red-800" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={officeStock <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{stockWarning && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">{officeStock <= 0 ? "STOK HABIS" : "STOK KURANG"}</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(item.qtyChecked, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || officeStock <= 0} value={field === "qtyChecked" ? officeStock : item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && stockWarning ? "border-red-500 bg-red-100 text-red-700 ring-2 ring-red-200 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
+  return <tr className={`border-t ${stockWarning ? "bg-[#FEF2F2] text-red-900 outline outline-1 -outline-offset-1 outline-red-300 dark:bg-red-950/25 dark:text-red-100 dark:outline-red-800" : item.selected ? "" : "opacity-45"}`}><td className="px-3 py-2"><input type="checkbox" checked={item.selected} disabled={officeStock <= 0} onChange={(event) => onChange(toggleHandoverItem(item, event.target.checked))} className="size-5 accent-blue-600 disabled:cursor-not-allowed" /></td><td className="px-3 py-2 font-black">{item.partNumber}{supportPusat && <span className="ml-2 rounded-full bg-violet-600 px-2 py-1 text-[8px] text-white">SUPPORT PUSAT</span>}{stockWarning && <span className="ml-2 rounded-full bg-red-600 px-2 py-1 text-[8px] text-white">{officeStock <= 0 ? "STOK HABIS" : "STOK KURANG"}</span>}</td><td className="max-w-80 px-3 py-2 text-[10px]">{item.description}</td><td className="px-3 py-2">{item.batch || "-"}</td>{(["stdQty", "qtyChecked", "qtyIssued"] as const).map((field) => <td key={field} className="px-3 py-2"><input type="number" min={0} max={field === "qtyIssued" ? Math.min(officeStock, item.stdQty) : undefined} disabled={field !== "qtyIssued" || !item.selected || officeStock <= 0} value={field === "qtyChecked" ? officeStock : item[field]} onChange={(event) => onChange(changeItemQuantity(item, field, Number(event.target.value) || 0))} className={`h-9 w-20 rounded-lg border bg-transparent px-2 text-center font-bold disabled:bg-slate-50 disabled:text-zinc-500 dark:disabled:bg-zinc-800 ${field === "qtyChecked" && stockWarning ? "border-red-500 bg-red-100 text-red-700 ring-2 ring-red-200 dark:bg-red-950/40" : ""}`} /></td>)}</tr>;
 }
 
 function HandoverItemCard({
@@ -1594,6 +1709,7 @@ function HandoverItemCard({
   onChange: (item: HandoverItem) => void;
 }) {
   const officeStock = itemOfficeStock(item);
+  const supportPusat = normalizeSupplySource(item.supplySource) === "SUPPORT PUSAT";
   const fields = [
     ["stdQty", "Kebutuhan"],
     ["qtyChecked", "Stok Office"],
@@ -1601,7 +1717,11 @@ function HandoverItemCard({
   ] as const;
 
   return (
-    <article
+    <motion.article
+      layout="position"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
       className={`overflow-hidden rounded-xl border ${
         officeStock < item.stdQty
           ? `border-2 border-red-400 bg-[#FEF2F2] shadow-sm shadow-red-100 dark:border-red-800 dark:bg-red-950/20 dark:shadow-none ${
@@ -1628,7 +1748,10 @@ function HandoverItemCard({
             <p className="min-w-0 flex-1 text-xs font-black leading-4">
               {item.description || "Tanpa deskripsi"}
             </p>
-            <span
+            <motion.span
+              key={officeStock <= 0 ? "empty" : officeStock < item.stdQty ? "low" : "ready"}
+              initial={{ opacity: 0, scale: 0.88 }}
+              animate={{ opacity: 1, scale: 1 }}
               className={`shrink-0 rounded-md px-2 py-1 text-[8px] font-black ${
                 officeStock <= 0
                   ? "bg-red-600 text-white"
@@ -1642,7 +1765,10 @@ function HandoverItemCard({
                 : officeStock < item.stdQty
                   ? "KURANG"
                   : "TERSEDIA"}
-            </span>
+            </motion.span>
+            {supportPusat && (
+              <span className="shrink-0 rounded-md bg-violet-600 px-2 py-1 text-[8px] font-black text-white">SUPPORT PUSAT</span>
+            )}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-black text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
@@ -1660,7 +1786,7 @@ function HandoverItemCard({
                     : "bg-emerald-50 text-emerald-700"
               }`}
             >
-              OFFICE {officeStock} PCS
+              {supportPusat ? "PUSAT" : "OFFICE"} {officeStock} PCS
             </span>
           </div>
         </div>
@@ -1672,14 +1798,14 @@ function HandoverItemCard({
             className="bg-slate-50 px-1.5 py-2 text-center dark:bg-zinc-900"
           >
             <span className="block text-[8px] font-bold uppercase text-zinc-500">
-              {label}
+              {field === "qtyChecked" && supportPusat ? "Stok Pusat" : label}
             </span>
             <input
               type="number"
               min={0}
               max={
                 field === "qtyIssued"
-                  ? Math.min(item.qtyChecked, item.stdQty)
+                  ? Math.min(officeStock, item.stdQty)
                   : undefined
               }
               disabled={field !== "qtyIssued" || !item.selected}
@@ -1702,7 +1828,7 @@ function HandoverItemCard({
           </label>
         ))}
       </div>
-    </article>
+    </motion.article>
   );
 }
 
@@ -1720,23 +1846,25 @@ function changeItemQuantity(
     };
   }
   if (field === "qtyIssued") {
+    const available = itemOfficeStock(item);
     return {
       ...item,
-      qtyIssued: Math.min(value, item.qtyChecked, item.stdQty),
+      qtyIssued: Math.min(value, available, item.stdQty),
     };
   }
   return { ...item, [field]: value };
 }
 
 function toggleHandoverItem(item: HandoverItem, selected: boolean) {
-  if (item.qtyChecked <= 0) {
+  const available = itemOfficeStock(item);
+  if (available <= 0) {
     return { ...item, selected: false, qtyIssued: 0 };
   }
   return {
     ...item,
     selected,
     qtyIssued: selected
-      ? Math.min(item.stdQty, item.qtyChecked)
+      ? Math.min(item.stdQty, available)
       : 0,
   };
 }
@@ -1888,6 +2016,20 @@ function InstrumentSection({
                 wrapperClassName="col-span-2 sm:col-span-1"
                 onChange={(condition) => update(index, { condition })}
               />
+              <label className="text-[10px] font-bold text-zinc-500">
+                Sumber instrument
+                <select
+                  value={normalizeSupplySource(item.supplySource)}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    update(index, { supplySource: event.target.value })
+                  }
+                  className="mt-1 h-11 w-full rounded-xl border bg-white px-2 text-xs font-bold dark:bg-zinc-900"
+                >
+                  <option value="OFFICE">Office</option>
+                  <option value="SUPPORT PUSAT">Support Pusat</option>
+                </select>
+              </label>
               <div className="col-span-2 sm:col-span-1 lg:col-span-3">
                 <InstrumentField
                   label="Keterangan tambahan"
@@ -2462,7 +2604,7 @@ function DocumentSummaryCard({
               {document.Hospital || "Rumah sakit belum diisi"}
             </h3>
             <p className="mt-1 text-[9px] font-bold text-zinc-400">
-              {document.Procedure} · {document.Brand}
+              {document.Procedure} · {document.Brand}{document.BearingOption ? ` · ${document.BearingOption}` : ""}
             </p>
           </div>
           <StatusBadge status={document.Status} />
@@ -2706,19 +2848,57 @@ function readLocalHandoverDraft(): OnlineHandover | null {
   }
 }
 
-function emptyHandover(procedure: HandoverProcedure, brand: HandoverBrand = "NORMMED"): OnlineHandover {
-  return { Procedure: procedure, Brand: brand, Hospital: "", Surgeon: "", ApprovedBy: "", HandoverDate: new Date().toISOString().slice(0, 10), SetName: procedure === "TKR" ? "BOX – 1" : "", Items: [], Instruments: defaultInstruments(procedure, brand), Sender: "", Checker1: "", Checker2: "", AcknowledgedBy: "", Receiver: "", Status: "DRAFT", AcceptanceNote: "", SenderSignature: "", ReceiverSignature: "" };
+function emptyHandover(procedure: HandoverProcedure, brand: HandoverBrand = "NORMMED", bearingOption: HandoverBearingOption = defaultBearingOption(procedure, brand)): OnlineHandover {
+  const kneeProcedure = procedure === "TKR" || procedure === "TKR VANGUARD" || procedure === "TKR PERSONA" || procedure === "UKA";
+  return { Procedure: procedure, Brand: brand, BearingOption: bearingOption, Hospital: "", Surgeon: "", ApprovedBy: "", HandoverDate: new Date().toISOString().slice(0, 10), SetName: kneeProcedure ? "BOX – 1" : "", Items: [], Instruments: defaultInstruments(procedure, brand), Sender: "", Checker1: "", Checker2: "", AcknowledgedBy: "", Receiver: "", Status: "DRAFT", AcceptanceNote: "", SenderSignature: "", ReceiverSignature: "" };
 }
 
-function buildHandoverFromStock(procedure: HandoverProcedure, brand: HandoverBrand, rows: StockRow[]) {
-  const base = emptyHandover(procedure, brand);
+function buildHandoverFromStock(procedure: HandoverProcedure, brand: HandoverBrand, rows: StockRow[], bearingOption: HandoverBearingOption = defaultBearingOption(procedure, brand)) {
+  const base = emptyHandover(procedure, brand, bearingOption);
   base.Items = rows
     .filter(
       (row) =>
-        normalizeBrand(row.Brand) === brand && matchesProcedure(row, procedure)
+        !isDiscontinuedStock(row) &&
+        matchesHandoverBrand(row, brand) &&
+        matchesProcedure(row, procedure) &&
+        matchesBearingOption(row, bearingOption)
     )
     .map(stockRowToHandoverItem);
   return base;
+}
+
+function bearingOptions(procedure: HandoverProcedure) {
+  const common = [
+    { value: "MOP" as const, label: "Metal on Poly" },
+    { value: "COP" as const, label: "Ceramic on Poly" },
+  ];
+  return procedure === "THR"
+    ? [...common, { value: "COC" as const, label: "Ceramic on Ceramic" }]
+    : common;
+}
+
+function defaultBearingOption(
+  procedure: HandoverProcedure,
+  brand: HandoverBrand
+): HandoverBearingOption {
+  return brand === "ZIMMER" &&
+    (procedure === "THR" || procedure === "BIPOLAR")
+    ? "MOP"
+    : "";
+}
+
+function matchesBearingOption(row: StockRow, option: HandoverBearingOption) {
+  if (!option) return true;
+  const category = normalizeImplantCategory(row.Implant);
+  if (option === "MOP") return category !== "HEAD CERAMIC";
+  if (option === "COP") return category !== "HEAD METAL";
+  if (option === "COC") {
+    if (category === "HEAD METAL") return false;
+    if (category === "LINER CUP") {
+      return /CERAMIC|BIOLOX/.test(String(row.Deskripsi || "").toUpperCase());
+    }
+  }
+  return true;
 }
 
 function stockAvailable(row: StockRow) {
@@ -2730,6 +2910,9 @@ function stockAvailable(row: StockRow) {
 }
 
 function itemOfficeStock(item: HandoverItem) {
+  if (normalizeSupplySource(item.supplySource) === "SUPPORT PUSAT") {
+    return Math.max(1, Number(item.stdQty || 1));
+  }
   if (item.officeAfter !== undefined && item.officeAfter !== null) {
     return Math.max(0, Number(item.officeAfter) || 0);
   }
@@ -2756,11 +2939,19 @@ function refreshDraftStock(
           `${String(item.partNumber).trim()}::${String(item.batch).trim()}`
         );
       if (!stockRow) return item;
-      const available = stockAvailable(stockRow);
+      const supplySource = normalizeSupplySource(
+        stockRow.SupplySource || item.supplySource
+      );
+      const officeAvailable = stockAvailable(stockRow);
+      const available =
+        supplySource === "SUPPORT PUSAT"
+          ? Math.max(1, Number(item.stdQty || 1))
+          : officeAvailable;
       return {
         ...item,
+        supplySource,
         stockRow: stockRow.No,
-        qtyChecked: available,
+        qtyChecked: officeAvailable,
         selected: available > 0 ? item.selected : false,
         qtyIssued:
           available > 0
@@ -2773,7 +2964,10 @@ function refreshDraftStock(
 
 function stockRowToHandoverItem(row: StockRow): HandoverItem {
   const handoverQty = isBoneCement(row) ? 2 : 1;
-  const availableStock = stockAvailable(row);
+  const supplySource = normalizeSupplySource(row.SupplySource);
+  const officeStock = stockAvailable(row);
+  const availableStock =
+    supplySource === "SUPPORT PUSAT" ? handoverQty : officeStock;
   return {
     selected: availableStock > 0,
     stockRow: row.No,
@@ -2781,10 +2975,17 @@ function stockRowToHandoverItem(row: StockRow): HandoverItem {
     description: row.Deskripsi,
     batch: row.Batch,
     stdQty: handoverQty,
-    qtyChecked: availableStock,
+    qtyChecked: officeStock,
     qtyIssued: Math.min(handoverQty, availableStock),
     qtyReturned: 0,
+    supplySource,
   };
+}
+
+function normalizeSupplySource(value: unknown) {
+  return String(value || "OFFICE").trim().toUpperCase() === "SUPPORT PUSAT"
+    ? "SUPPORT PUSAT"
+    : "OFFICE";
 }
 
 function stockItemKey(row: StockRow) {
@@ -2806,9 +3007,33 @@ function normalizeBrand(brand: unknown): HandoverBrand {
     : "NORMMED";
 }
 
+function matchesHandoverBrand(row: StockRow, brand: HandoverBrand) {
+  // Refobacin/Bone Cement adalah kebutuhan bersama dan tetap tersedia pada
+  // paket Normmed meskipun brand pada master tercatat Zimmer atau kosong.
+  if (brand === "NORMMED" && isBoneCement(row)) return true;
+  return normalizeBrand(row.Brand) === brand;
+}
+
 function matchesProcedure(row: StockRow, procedure: HandoverProcedure) {
   const category = normalizeImplantCategory(row.Implant);
   const description = String(row.Deskripsi || "").toUpperCase();
+  const brand = normalizeBrand(row.Brand);
+  const zimmerKneeProcedure =
+    brand === "ZIMMER" &&
+    (procedure === "TKR" ||
+      procedure === "TKR VANGUARD" ||
+      procedure === "TKR PERSONA" ||
+      procedure === "UKA");
+
+  // Set Zimmer untuk tindakan knee tidak membutuhkan dua aksesori ini.
+  // Bone Cement reguler tetap disertakan.
+  if (
+    zimmerKneeProcedure &&
+    ((description.includes("MILLER") && /INJECT|INJEK/.test(description)) ||
+      /ALLEN\s*PLUG/.test(description))
+  ) {
+    return false;
+  }
   const isAccessory =
     category === "AKSESORIS" ||
     /AKSESORIS|ACCESSOR(?:Y|IES)|CABLE|ADAPTER/.test(description);
@@ -2816,6 +3041,18 @@ function matchesProcedure(row: StockRow, procedure: HandoverProcedure) {
 
   // Aksesoris dan Bone Cement digunakan pada ketiga jenis tindakan.
   if (isAccessory || isCement) return true;
+  if (procedure === "TKR VANGUARD" && !/VANGUARD/.test(description)) {
+    return false;
+  }
+  if (procedure === "TKR PERSONA" && !/PERSONA/.test(description)) {
+    return false;
+  }
+  if (procedure === "UKA") {
+    return (
+      category === "UKA" ||
+      /\bUKA\b|\bUKR\b|OXFORD|PARTIAL\s+KNEE|UNICOMPARTMENT/.test(description)
+    );
+  }
   // Head Metal harus tetap masuk Bipolar meski kategori data lama masih THR.
   if (
     procedure === "BIPOLAR" &&
@@ -2853,12 +3090,31 @@ function matchesProcedure(row: StockRow, procedure: HandoverProcedure) {
       "INSERT TKR",
       "BONE CEMENT",
     ],
+    "TKR VANGUARD": [
+      "FEMORAL COMPONENT",
+      "TIBIAL COMPONENT",
+      "TKR",
+      "STEM TKR",
+      "INSERT TKR",
+    ],
+    UKA: ["UKA"],
+    "TKR PERSONA": [
+      "FEMORAL COMPONENT",
+      "TIBIAL COMPONENT",
+      "TKR",
+      "STEM TKR",
+      "INSERT TKR",
+    ],
   };
 
   if (categories[procedure].includes(category)) return true;
   // Fallback hanya untuk baris lama yang kategori implant-nya belum diisi.
   if (category) return false;
-  if (procedure === "TKR") {
+  if (
+    procedure === "TKR" ||
+    procedure === "TKR VANGUARD" ||
+    procedure === "TKR PERSONA"
+  ) {
     return /KNEE|TIBIAL|FEMORAL COMPONENT|INSERT/.test(description);
   }
   if (procedure === "THR") {
@@ -2877,6 +3133,8 @@ function normalizeImplantCategory(value: unknown) {
     "ACETABULUM CUP": "CUP ACETABULUM",
     "LINNER CUP": "LINER CUP",
     "LINNER BIPOLAR": "LINER BIPOLAR",
+    "METAL HEAD": "HEAD METAL",
+    "CERAMIC HEAD": "HEAD CERAMIC",
     "FEMORAL KOMPONEN": "FEMORAL COMPONENT",
     "TIBIA KOMPONEN": "TIBIAL COMPONENT",
     "TIBIAL KOMPONEN": "TIBIAL COMPONENT",
@@ -2887,12 +3145,13 @@ function normalizeImplantCategory(value: unknown) {
 
 function defaultInstruments(procedure: HandoverProcedure, brand: HandoverBrand): HandoverInstrument[] {
   const shared = [
-    { selected: true, code: "INSTRUMENT", name: "SAW BLADE", qty: 2, unit: "PC", condition: "SET" },
-    { selected: true, code: "INSTRUMENT", name: "POWERTOOLS", qty: 1, unit: "SET", condition: "SET" },
-    { selected: true, code: "INSTRUMENT", name: "BATTERY", qty: 3, unit: "PC", condition: "SET" },
-    { selected: true, code: "INSTRUMENT", name: "CHARGER", qty: 1, unit: "PC", condition: "SET" },
+    { selected: true, code: "INSTRUMENT", name: "SAW BLADE", qty: 2, unit: "PC", condition: "SET", supplySource: "OFFICE" },
+    { selected: true, code: "INSTRUMENT", name: "POWERTOOLS", qty: 1, unit: "SET", condition: "SET", supplySource: "OFFICE" },
+    { selected: true, code: "INSTRUMENT", name: "BATTERY", qty: 3, unit: "PC", condition: "SET", supplySource: "OFFICE" },
+    { selected: true, code: "INSTRUMENT", name: "CHARGER", qty: 1, unit: "PC", condition: "SET", supplySource: "OFFICE" },
   ];
-  if (procedure === "TKR") return [{ selected: true, code: "INSTRUMENT", name: `TKR ${brand}`, qty: 3, unit: "TRAY", condition: "SET" }, ...shared];
+  if (procedure === "UKA") return [{ selected: true, code: "INSTRUMENT", name: `UKA ${brand}`, qty: 3, unit: "TRAY", condition: "SET", supplySource: "OFFICE" }, ...shared];
+  if (procedure === "TKR" || procedure === "TKR VANGUARD" || procedure === "TKR PERSONA") return [{ selected: true, code: "INSTRUMENT", name: `${procedure} ${brand}`, qty: 3, unit: "TRAY", condition: "SET", supplySource: "OFFICE" }, ...shared];
   if (procedure === "THR") return [
     { selected: true, code: "INSTRUMENT", name: `BIPOLAR ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
     { selected: true, code: "INSTRUMENT", name: `THR ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
@@ -2904,4 +3163,43 @@ function defaultInstruments(procedure: HandoverProcedure, brand: HandoverBrand):
     { selected: true, code: "INSTRUMENT", name: `STEM ${brand}`, qty: 1, unit: "TRAY", condition: "SET" },
     ...shared,
   ];
+}
+
+function LazyItemSkeleton() {
+  return (
+    <div className="animate-pulse rounded-xl border bg-white p-3 dark:bg-zinc-900">
+      <div className="flex gap-3">
+        <div className="size-5 rounded bg-slate-200 dark:bg-zinc-800" />
+        <div className="min-w-0 flex-1">
+          <div className="h-3 w-4/5 rounded bg-slate-200 dark:bg-zinc-800" />
+          <div className="mt-2 h-3 w-2/5 rounded bg-slate-100 dark:bg-zinc-800" />
+          <div className="mt-3 grid grid-cols-3 gap-1.5">
+            <div className="h-9 rounded-lg bg-slate-100 dark:bg-zinc-800" />
+            <div className="h-9 rounded-lg bg-slate-100 dark:bg-zinc-800" />
+            <div className="h-9 rounded-lg bg-slate-100 dark:bg-zinc-800" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HandoverPageSkeleton({ embedded = false }: { embedded?: boolean }) {
+  const Wrapper = embedded ? "div" : "main";
+  return (
+    <Wrapper className={`${embedded ? "min-h-[60dvh]" : "min-h-dvh"} bg-slate-50 p-3 dark:bg-zinc-950 sm:p-6`} aria-label="Memuat serah terima">
+      <div className="mx-auto max-w-[1500px] animate-pulse space-y-4">
+        {!embedded && <div className="h-24 rounded-2xl bg-slate-900" />}
+        <div className="grid gap-4 xl:grid-cols-[240px_1fr]">
+          <div className="hidden space-y-3 xl:block">
+            {Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-28 rounded-2xl border bg-white dark:bg-zinc-900" />)}
+          </div>
+          <div className="space-y-4">
+            <div className="h-40 rounded-2xl border bg-white p-4 dark:bg-zinc-900"><div className="h-10 rounded-xl bg-slate-100 dark:bg-zinc-800" /><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">{Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-11 rounded-xl bg-slate-100 dark:bg-zinc-800" />)}</div></div>
+            <div className="grid gap-2 lg:grid-cols-2"><LazyItemSkeleton /><LazyItemSkeleton /><LazyItemSkeleton /><LazyItemSkeleton /></div>
+          </div>
+        </div>
+      </div>
+    </Wrapper>
+  );
 }

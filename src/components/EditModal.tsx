@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, CheckCircle, AlertTriangle, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
+import { isDiscontinuedStock } from "@/lib/stockStatus";
 
 import { StockRow } from "@/types/stock";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,11 @@ function normalizeRow(row: StockRow | null): StockRow {
     TERPAKAI: toSafeNumber(source.TERPAKAI),
     REFILL: toSafeNumber(source.REFILL),
     KET: latestKet,
+    Discontinue: isDiscontinuedStock(source),
+    SupplySource:
+      String(source.SupplySource || "OFFICE").toUpperCase() === "SUPPORT PUSAT"
+        ? "SUPPORT PUSAT"
+        : "OFFICE",
   };
 }
 
@@ -79,6 +85,8 @@ const EMPTY_ROW: StockRow = {
   TERPAKAI: 0,
   REFILL: 0,
   KET: "",
+  Discontinue: false,
+  SupplySource: "OFFICE",
 };
 
 /* ================= ROOT ================= */
@@ -306,6 +314,40 @@ function ModalContent({
               value={form.KET}
               onChange={(v) => setForm({ ...form, KET: v })}
             />
+
+            <label className="block text-[10px] font-bold text-zinc-500">
+              Sumber implant
+              <select
+                value={form.SupplySource || "OFFICE"}
+                onChange={(event) =>
+                  setForm({ ...form, SupplySource: event.target.value })
+                }
+                className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold text-zinc-900 dark:bg-zinc-900 dark:text-white"
+              >
+                <option value="OFFICE">Stok Office</option>
+                <option value="SUPPORT PUSAT">Support Pusat</option>
+              </select>
+              <span className="mt-1 block text-[10px] font-normal text-zinc-400">
+                Support Pusat tercatat di katalog, tetapi tidak dihitung sebagai stok fisik office.
+              </span>
+            </label>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/60">
+              <input
+                type="checkbox"
+                checked={Boolean(form.Discontinue)}
+                onChange={(event) =>
+                  setForm({ ...form, Discontinue: event.target.checked })
+                }
+                className="mt-0.5 size-5 accent-zinc-900"
+              />
+              <span>
+                <span className="block text-sm font-bold">Implant discontinue</span>
+                <span className="mt-0.5 block text-[11px] text-zinc-500">
+                  Tidak tersedia lagi dan tidak ditampilkan pada warning refill.
+                </span>
+              </span>
+            </label>
           </>
         )}
 

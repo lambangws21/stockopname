@@ -1,6 +1,6 @@
 // Satu Apps Script untuk Stock Implant, External Sheet, History, KPI,
 // Scanner, Backup/PDF, dan Customer Mapping.
-const APP_VERSION = 38;
+const APP_VERSION = 42;
 const DEFAULT_SHEET = "Sheet1";
 const LOW_STOCK_THRESHOLD = 1;
 const STOCK_WARNING_SHEET = "StockWarnings";
@@ -10,6 +10,7 @@ const STOCK_SPREADSHEET_ID =
 const STOCK_SHEET_GID = "136121031";
 const IMPLANT_OPTIONS = [
   "TKR",
+  "UKA",
   "BIPOLAR",
   "THR",
   "INSERT TKR",
@@ -108,6 +109,7 @@ const HANDOVER_HEADERS = [
   "SenderSignatureMetaJson",
   "ReceiverSignatureMetaJson",
   "VerificationToken",
+  "BearingOption",
 ];
 const CUSTOMER_HISTORY_HEADERS = [
   "Timestamp",
@@ -189,6 +191,20 @@ const MASTER_HEADERS = [
   "TERPAKAI",
   "REFILL",
   "KET",
+  "Discontinue",
+  "SupplySource",
+];
+const INSTRUMENT_MASTER_SHEET = "InstrumentMaster";
+const INSTRUMENT_MASTER_HEADERS = [
+  "Code",
+  "Name",
+  "Qty",
+  "Uom",
+  "Condition",
+  "Procedure",
+  "Brand",
+  "SupplySource",
+  "UpdatedAt",
 ];
 
 function cors(json) {
@@ -219,6 +235,18 @@ function safeNumber(value) {
 
   const n = Number(value);
   return isNaN(n) ? 0 : n;
+}
+
+function safeBoolean(value) {
+  if (value === true || value === 1) return true;
+  const normalized = String(value || "").trim().toUpperCase();
+  return ["TRUE", "YA", "YES", "1", "DISCONTINUE", "DISCONTINUED"].indexOf(normalized) >= 0;
+}
+
+function normalizeSupplySource(value) {
+  return String(value || "OFFICE").trim().toUpperCase() === "SUPPORT PUSAT"
+    ? "SUPPORT PUSAT"
+    : "OFFICE";
 }
 
 function hasOwn(obj, key) {
@@ -505,6 +533,16 @@ function setupApplicationSheets() {
   handoverSheet.getRange("I:I").setNumberFormat("yyyy-mm-dd");
   handoverSheet.getRange("S:T").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   handoverSheet.getRange("Y:Z").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  const instrumentMasterSheet = getOrCreateSheet(INSTRUMENT_MASTER_SHEET);
+  ensureHeaderRow(instrumentMasterSheet, INSTRUMENT_MASTER_HEADERS);
+  instrumentMasterSheet
+    .getRange(1, 1, 1, INSTRUMENT_MASTER_HEADERS.length)
+    .setValues([INSTRUMENT_MASTER_HEADERS])
+    .setBackground("#4c1d95")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold");
+  instrumentMasterSheet.setFrozenRows(1);
+  instrumentMasterSheet.getRange("I:I").setNumberFormat("yyyy-mm-dd hh:mm:ss");
   const backupLogSheet = getOrCreateSheet(BACKUP_LOG_SHEET);
   ensureHeaderRow(backupLogSheet, BACKUP_LOG_HEADERS);
   backupLogSheet
@@ -515,6 +553,7 @@ function setupApplicationSheets() {
     .setFontWeight("bold");
   backupLogSheet.setFrozenRows(1);
   backupLogSheet.getRange("A:A").setNumberFormat("yyyy-mm-dd hh:mm:ss");
+  migrateDiscontinuedWarningsToStock();
   syncStockWarnings();
 
   return {
@@ -724,18 +763,20 @@ function updateWarningsBatch(entries) {
       indexByKey[key] === undefined ? -1 : indexByKey[key];
     const existing = targetIndex >= 0 ? output[targetIndex] : [];
     const remaining = safeNumber(stockRow.TotalQty);
+    const supportPusat =
+      normalizeSupplySource(stockRow.SupplySource) === "SUPPORT PUSAT";
     const isWarning = remaining <= LOW_STOCK_THRESHOLD;
-    if (!isWarning && targetIndex < 0) return;
+    if ((!isWarning || supportPusat) && targetIndex < 0) return;
     const now = new Date();
     const wasResolved = String(existing[1] || "") === "SELESAI";
-    const workflowStatus = isWarning
+    const workflowStatus = isWarning && !supportPusat
       ? wasResolved || !existing[13]
         ? "BELUM DIPROSES"
         : existing[13]
       : "SELESAI";
     const values = [
       now,
-      isWarning ? (remaining <= 0 ? "HABIS" : "AKAN HABIS") : "SELESAI",
+      isWarning && !supportPusat ? (remaining <= 0 ? "HABIS" : "AKAN HABIS") : "SELESAI",
       entry.sheetName || DEFAULT_SHEET,
       safeNumber(entry.no),
       stockRow.NoStok || "",
@@ -744,13 +785,15 @@ function updateWarningsBatch(entries) {
       stockRow.Brand || "",
       stockRow.Batch || "",
       remaining,
-      isWarning
+      supportPusat
+        ? "Item tersedia melalui Support Pusat dan bukan stok fisik office."
+        : isWarning
         ? remaining <= 0
           ? "WARNING: Implant sudah habis dan tidak tersedia lagi. Segera lakukan refill."
           : "WARNING: Sisa 1. Jika digunakan lagi implant akan habis dan tidak tersedia."
         : "Stok sudah tersedia kembali.",
       entry.lastMovement || stockRow.KET || "",
-      isWarning ? "" : now,
+      isWarning && !supportPusat ? "" : now,
       workflowStatus,
       existing[14] || "",
       existing[15] || "",
@@ -809,7 +852,9 @@ function dispatchHandoverInventory(payload) {
         "Stock " + String(item.partNumber || "-") + " tidak ditemukan"
       );
     }
-    requiredByRow[rowNumber] = safeNumber(requiredByRow[rowNumber]) + qty;
+    if (normalizeSupplySource(item.supplySource) !== "SUPPORT PUSAT") {
+      requiredByRow[rowNumber] = safeNumber(requiredByRow[rowNumber]) + qty;
+    }
   });
 
   Object.keys(requiredByRow).forEach(function (rowKey) {
@@ -834,6 +879,7 @@ function dispatchHandoverInventory(payload) {
       ? Math.max(0, safeNumber(item.qtyIssued))
       : 0;
     const rowNumber = resolvedRows[index];
+    const supplySource = normalizeSupplySource(item.supplySource);
     const officeBefore = rowNumber
       ? safeNumber(stockRows[rowNumber - 1][6])
       : 0;
@@ -841,12 +887,15 @@ function dispatchHandoverInventory(payload) {
       const stockIndex = rowNumber - 1;
       const before = rowArrayToObject(stockRows[stockIndex], rowNumber);
       const updated = stockRows[stockIndex].slice();
-      updated[5] = safeNumber(updated[6]) - qty;
-      updated[6] = updated[5];
+      if (supplySource !== "SUPPORT PUSAT") {
+        updated[5] = safeNumber(updated[6]) - qty;
+        updated[6] = updated[5];
+      }
       updated[9] = buildMovementDescription(
         "MOBILISASI_KELUAR",
         qty,
-        "Serah terima " +
+        (supplySource === "SUPPORT PUSAT" ? "SUPPORT PUSAT • " : "") +
+          "Serah terima " +
           String(payload.ID || "") +
           " ke " +
           String(payload.Hospital || "rumah sakit")
@@ -860,21 +909,32 @@ function dispatchHandoverInventory(payload) {
         after: after,
         by: payload.by || payload.Sender || "Serah Terima Online",
       });
-      warningEntries.push({
-        no: rowNumber,
-        stockRow: after,
-        lastMovement: updated[9],
-      });
+      if (supplySource !== "SUPPORT PUSAT") {
+        warningEntries.push({
+          no: rowNumber,
+          stockRow: after,
+          lastMovement: updated[9],
+        });
+      }
     }
     return Object.assign({}, item, {
       stockRow: rowNumber,
       officeBefore: officeBefore,
-      officeAfter: Math.max(0, officeBefore - qty),
+      officeAfter:
+        supplySource === "SUPPORT PUSAT"
+          ? officeBefore
+          : Math.max(0, officeBefore - qty),
+      supplySource: supplySource,
       qtyIssued: qty,
       hospitalQty: qty,
       usedQty: Math.max(0, safeNumber(item.usedQty)),
       returnedQty: Math.max(0, safeNumber(item.returnedQty)),
-      locationStatus: qty > 0 ? "DI RUMAH SAKIT" : "TIDAK DIKIRIM",
+      locationStatus:
+        qty > 0
+          ? supplySource === "SUPPORT PUSAT"
+            ? "SUPPORT PUSAT → RUMAH SAKIT"
+            : "DI RUMAH SAKIT"
+          : "TIDAK DIKIRIM",
     });
   });
   if (historyEntries.length) {
@@ -999,6 +1059,7 @@ function saveHandover(payload, skipLock) {
       ? previous[27] || "{}"
       : JSON.stringify(payload.ReceiverSignatureMeta || {}),
     payload.VerificationToken || previous[28] || "",
+    payload.BearingOption || previous[29] || "",
   ];
   if (rowNumber) {
     sheet.getRange(rowNumber, 1, 1, HANDOVER_HEADERS.length).setValues([values]);
@@ -1348,11 +1409,14 @@ function settleHandoverInventory(payload) {
       const usedDelta = nextUsed - previousUsed;
       const returnedDelta = nextReturned - previousReturned;
       const stockRow = safeNumber(item.stockRow);
+      const supplySource = normalizeSupplySource(item.supplySource);
       const movementNote =
-        "Dokumen " +
-        String(current.ID) +
-        " • " +
-        String(current.Hospital || "Rumah sakit");
+        (supplySource === "SUPPORT PUSAT" ? "SUPPORT PUSAT • " : "STOK OFFICE • ") +
+        "Dokter: " + String(current.Surgeon || "-") +
+        " • Tanggal: " + String(current.HandoverDate || "-") +
+        " • Tindakan: " + String(current.Procedure || "-") +
+        " • RS: " + String(current.Hospital || "-") +
+        " • Dokumen: " + String(current.ID || "-");
       const stockIndex = stockRow - 1;
       if (
         (usedDelta > 0 || returnedDelta > 0) &&
@@ -1384,12 +1448,16 @@ function settleHandoverInventory(payload) {
       if (returnedDelta > 0) {
         const beforeReturn = rowArrayToObject(stockRows[stockIndex], stockRow);
         const returnedRow = stockRows[stockIndex].slice();
-        returnedRow[5] = safeNumber(returnedRow[5]) + returnedDelta;
-        returnedRow[6] = returnedRow[5];
+        if (supplySource !== "SUPPORT PUSAT") {
+          returnedRow[5] = safeNumber(returnedRow[5]) + returnedDelta;
+          returnedRow[6] = returnedRow[5];
+        }
         returnedRow[9] = buildMovementDescription(
           "MOBILISASI_MASUK",
           returnedDelta,
-          "Kembali dari " + movementNote
+          supplySource === "SUPPORT PUSAT"
+            ? "Kembali ke pusat • " + movementNote
+            : "Kembali ke office • " + movementNote
         );
         stockRows[stockIndex] = returnedRow;
         historyEntries.push({
@@ -1401,11 +1469,13 @@ function settleHandoverInventory(payload) {
         });
       }
       if (usedDelta > 0 || returnedDelta > 0) {
-        warningByRow[stockRow] = {
-          no: stockRow,
-          stockRow: rowArrayToObject(stockRows[stockIndex], stockRow),
-          lastMovement: stockRows[stockIndex][9],
-        };
+        if (supplySource !== "SUPPORT PUSAT") {
+          warningByRow[stockRow] = {
+            no: stockRow,
+            stockRow: rowArrayToObject(stockRows[stockIndex], stockRow),
+            lastMovement: stockRows[stockIndex][9],
+          };
+        }
       }
       const remaining = hospitalQty - nextUsed - nextReturned;
       return Object.assign({}, item, {
@@ -1416,7 +1486,9 @@ function settleHandoverInventory(payload) {
           remaining > 0
             ? "DI RUMAH SAKIT"
             : nextUsed > 0 && nextReturned === 0
-              ? "TERPAKAI"
+              ? supplySource === "SUPPORT PUSAT"
+                ? "TERPAKAI • SUPPORT PUSAT"
+                : "TERPAKAI"
               : "SELESAI",
       });
     });
@@ -1451,6 +1523,23 @@ function getStockWarningSheet() {
   return sheet;
 }
 
+function migrateDiscontinuedWarningsToStock() {
+  const warningSheet = getStockWarningSheet();
+  const warningRows = warningSheet.getDataRange().getValues();
+  const discontinueColumn = MASTER_HEADERS.indexOf("Discontinue") + 1;
+  for (var i = 1; i < warningRows.length; i++) {
+    const warningStatus = String(warningRows[i][1] || "").toUpperCase();
+    const workflowStatus = String(warningRows[i][13] || "").toUpperCase();
+    if (warningStatus !== "DISCONTINUE" && workflowStatus !== "DISCONTINUE") continue;
+    const stockSheet = getOrCreateSheet(String(warningRows[i][2] || DEFAULT_SHEET));
+    normalizeSheet(stockSheet);
+    const stockRow = safeNumber(warningRows[i][3]);
+    if (stockRow >= 2 && stockRow <= stockSheet.getLastRow()) {
+      stockSheet.getRange(stockRow, discontinueColumn).setValue(true);
+    }
+  }
+}
+
 function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
   const warningSheet = getStockWarningSheet();
   const rows = warningSheet.getDataRange().getValues();
@@ -1471,6 +1560,34 @@ function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
     }
   }
 
+  if (safeBoolean(stockRow.Discontinue)) {
+    if (targetRow) {
+      const discontinued = rows[targetRow - 1].slice();
+      discontinued[0] = now;
+      discontinued[1] = "DISCONTINUE";
+      discontinued[10] = "Implant discontinue dan tidak perlu diminta kembali.";
+      discontinued[12] = now;
+      discontinued[13] = "DISCONTINUE";
+      warningSheet.getRange(targetRow, 1, 1, STOCK_WARNING_HEADERS.length)
+        .setValues([discontinued.slice(0, STOCK_WARNING_HEADERS.length)]);
+    }
+    return;
+  }
+
+  if (normalizeSupplySource(stockRow.SupplySource) === "SUPPORT PUSAT") {
+    if (targetRow) {
+      const supported = rows[targetRow - 1].slice();
+      supported[0] = now;
+      supported[1] = "SELESAI";
+      supported[10] = "Item tersedia melalui Support Pusat dan bukan stok fisik office.";
+      supported[12] = now;
+      supported[13] = "SELESAI";
+      warningSheet.getRange(targetRow, 1, 1, STOCK_WARNING_HEADERS.length)
+        .setValues([supported.slice(0, STOCK_WARNING_HEADERS.length)]);
+    }
+    return;
+  }
+
   const isWarning = remaining <= LOW_STOCK_THRESHOLD;
   const status = remaining <= 0 ? "HABIS" : "AKAN HABIS";
   const note =
@@ -1481,7 +1598,9 @@ function upsertStockWarning(stockSheetName, no, stockRow, lastMovement) {
   if (!isWarning && !targetRow) return;
 
   const existing = targetRow ? rows[targetRow - 1] : [];
-  const wasResolved = String(existing[1] || "") === "SELESAI";
+  const wasResolved =
+    String(existing[1] || "") === "SELESAI" ||
+    String(existing[1] || "") === "DISCONTINUE";
   const workflowStatus = isWarning
     ? wasResolved || !existing[13]
       ? "BELUM DIPROSES"
@@ -1535,7 +1654,10 @@ function listStockWarnings(params) {
       return item;
     })
     .filter(function (item) {
-      return includeResolved || String(item.Status) !== "SELESAI";
+      return includeResolved || (
+        String(item.Status) !== "SELESAI" &&
+        String(item.Status) !== "DISCONTINUE"
+      );
     })
     .reverse();
   return { status: "success", data: data };
@@ -1555,6 +1677,7 @@ function updateStockWarningWorkflow(payload) {
     "SEDANG DIPESAN",
     "DALAM PENGIRIMAN",
     "SELESAI",
+    "DISCONTINUE",
   ];
   const current = rows[rowNumber - 1].slice();
   const nextStatus = String(payload.WorkflowStatus || current[13] || "")
@@ -1566,6 +1689,11 @@ function updateStockWarningWorkflow(payload) {
 
   current[0] = new Date();
   current[13] = nextStatus;
+  if (nextStatus === "DISCONTINUE") {
+    current[1] = "DISCONTINUE";
+    current[10] = "Implant discontinue dan tidak perlu diminta kembali.";
+    current[12] = new Date();
+  }
   current[14] = hasOwn(payload, "PIC") ? payload.PIC || "" : current[14];
   current[15] = hasOwn(payload, "TargetRefill")
     ? payload.TargetRefill || ""
@@ -1573,6 +1701,15 @@ function updateStockWarningWorkflow(payload) {
   current[16] = hasOwn(payload, "LogisticsNote")
     ? payload.LogisticsNote || ""
     : current[16];
+
+  if (nextStatus === "DISCONTINUE") {
+    const stockSheet = getOrCreateSheet(String(current[2] || DEFAULT_SHEET));
+    normalizeSheet(stockSheet);
+    const stockRow = safeNumber(current[3]);
+    if (stockRow >= 2 && stockRow <= stockSheet.getLastRow()) {
+      stockSheet.getRange(stockRow, MASTER_HEADERS.indexOf("Discontinue") + 1).setValue(true);
+    }
+  }
   if (
     nextStatus === "SUDAH DIINFORMASIKAN" &&
     String(current[17] || "").trim() === ""
@@ -2049,6 +2186,166 @@ function deleteHistoryRows(payload) {
   }
 }
 
+function importStockExcelBatch(body) {
+  const payload = body || {};
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const instruments = Array.isArray(payload.instruments) ? payload.instruments : [];
+  if (!items.length && !instruments.length) {
+    return { status: "error", message: "Tidak ada data Excel yang dapat diimpor" };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { status: "busy", message: "Import lain sedang berjalan. Coba kembali." };
+  }
+
+  try {
+    const sheet = resolveDataSheet(payload);
+    normalizeSheet(sheet);
+    const existing = sheet.getDataRange().getValues();
+    const existingByKey = {};
+    for (var rowIndex = 1; rowIndex < existing.length; rowIndex++) {
+      const existingRow = rowArrayToObject(existing[rowIndex], rowIndex + 1);
+      const key =
+        String(existingRow.NoStok || "").trim().toUpperCase() +
+        "::" +
+        String(existingRow.Batch || "").trim().toUpperCase();
+      if (key !== "::") existingByKey[key] = rowIndex + 1;
+    }
+
+    const brand = String(payload.Brand || "ZIMMER").trim().toUpperCase();
+    const procedure = String(payload.Procedure || "TKR").trim().toUpperCase();
+    const supplySource = normalizeSupplySource(payload.SupplySource);
+    const duplicateMode = String(payload.duplicateMode || "SKIP").toUpperCase();
+    const appendRows = [];
+    const updatedRows = [];
+    var skipped = 0;
+
+    items.forEach(function (item) {
+      const ref = String(item.NoStok || "").trim();
+      const description = String(item.Deskripsi || "").trim();
+      if (!ref || !description) return;
+      const batch = String(item.Batch || "").trim();
+      const key = ref.toUpperCase() + "::" + batch.toUpperCase();
+      const targetRow = safeNumber(existingByKey[key]);
+      const qty = Math.max(0, safeNumber(item.Qty));
+
+      if (targetRow) {
+        if (duplicateMode !== "UPDATE") {
+          skipped++;
+          return;
+        }
+        const current = existing[targetRow - 1].slice();
+        current[0] = ref;
+        current[1] = description;
+        current[2] = String(item.Implant || procedure).trim().toUpperCase();
+        current[3] = brand;
+        current[4] = batch;
+        if (payload.replaceStock === true) {
+          current[5] = qty;
+          current[6] = qty;
+        }
+        current[11] = supplySource;
+        updatedRows.push({ row: targetRow, values: current });
+        return;
+      }
+
+      appendRows.push([
+        ref,
+        description,
+        String(item.Implant || procedure).trim().toUpperCase(),
+        brand,
+        batch,
+        qty,
+        qty,
+        0,
+        0,
+        "Import Excel • " + String(payload.fileName || "file"),
+        false,
+        supplySource,
+      ]);
+    });
+
+    updatedRows.forEach(function (entry) {
+      sheet
+        .getRange(entry.row, 1, 1, MASTER_HEADERS.length)
+        .setValues([entry.values.slice(0, MASTER_HEADERS.length)]);
+    });
+    if (appendRows.length) {
+      sheet
+        .getRange(sheet.getLastRow() + 1, 1, appendRows.length, MASTER_HEADERS.length)
+        .setValues(appendRows);
+    }
+
+    const instrumentSheet = getOrCreateSheet(INSTRUMENT_MASTER_SHEET);
+    ensureHeaderRow(instrumentSheet, INSTRUMENT_MASTER_HEADERS);
+    const instrumentRows = instrumentSheet.getDataRange().getValues();
+    const instrumentByKey = {};
+    for (var instrumentIndex = 1; instrumentIndex < instrumentRows.length; instrumentIndex++) {
+      const instrumentKey =
+        String(instrumentRows[instrumentIndex][0] || "").trim().toUpperCase() +
+        "::" +
+        String(instrumentRows[instrumentIndex][1] || "").trim().toUpperCase();
+      instrumentByKey[instrumentKey] = instrumentIndex + 1;
+    }
+    const appendInstruments = [];
+    var instrumentUpdated = 0;
+    var instrumentSkipped = 0;
+    instruments.forEach(function (instrument) {
+      const code = String(instrument.Code || "INSTRUMENT").trim();
+      const name = String(instrument.Name || "").trim();
+      if (!name) return;
+      const key = code.toUpperCase() + "::" + name.toUpperCase();
+      const values = [
+        code,
+        name,
+        Math.max(0, safeNumber(instrument.Qty)),
+        String(instrument.Uom || "SET").toUpperCase(),
+        String(instrument.Condition || "BAIK").toUpperCase(),
+        procedure,
+        brand,
+        supplySource,
+        new Date(),
+      ];
+      const targetRow = safeNumber(instrumentByKey[key]);
+      if (targetRow && duplicateMode === "UPDATE") {
+        instrumentSheet
+          .getRange(targetRow, 1, 1, INSTRUMENT_MASTER_HEADERS.length)
+          .setValues([values]);
+        instrumentUpdated++;
+      } else if (targetRow) {
+        instrumentSkipped++;
+      } else {
+        appendInstruments.push(values);
+      }
+    });
+    if (appendInstruments.length) {
+      instrumentSheet
+        .getRange(
+          instrumentSheet.getLastRow() + 1,
+          1,
+          appendInstruments.length,
+          INSTRUMENT_MASTER_HEADERS.length
+        )
+        .setValues(appendInstruments);
+    }
+
+    SpreadsheetApp.flush();
+    return {
+      status: "success",
+      inserted: appendRows.length,
+      updated: updatedRows.length,
+      skipped: skipped,
+      instrumentInserted: appendInstruments.length,
+      instrumentUpdated: instrumentUpdated,
+      instrumentSkipped: instrumentSkipped,
+      message: "Import Excel selesai",
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function handleCreate(body) {
   const payload = body || {};
   const sheet = resolveDataSheet(payload);
@@ -2065,6 +2362,8 @@ function handleCreate(body) {
     safeNumber(payload.TERPAKAI),
     safeNumber(payload.REFILL),
     payload.KET || "",
+    safeBoolean(payload.Discontinue),
+    String(payload.SupplySource || "OFFICE").toUpperCase(),
   ];
 
   row[6] = safeNumber(row[5]);
@@ -2106,6 +2405,12 @@ function handleUpdate(body) {
   const nextUsed = hasOwn(payload, "TERPAKAI") ? payload.TERPAKAI : before.TERPAKAI;
   const nextRefill = hasOwn(payload, "REFILL") ? payload.REFILL : before.REFILL;
   const nextKet = hasOwn(payload, "KET") ? payload.KET : before.KET;
+  const nextDiscontinue = hasOwn(payload, "Discontinue")
+    ? safeBoolean(payload.Discontinue)
+    : safeBoolean(before.Discontinue);
+  const nextSupplySource = hasOwn(payload, "SupplySource")
+    ? String(payload.SupplySource || "OFFICE").toUpperCase()
+    : String(before.SupplySource || "OFFICE").toUpperCase();
 
   const updated = [
     nextNoStok || "",
@@ -2118,6 +2423,8 @@ function handleUpdate(body) {
     safeNumber(nextUsed),
     safeNumber(nextRefill),
     nextKet || "",
+    nextDiscontinue,
+    nextSupplySource,
   ];
   updated[6] = safeNumber(updated[5]);
 
@@ -2193,6 +2500,8 @@ function handleMutasi(body) {
     payload.movementReason || (type === "in" ? "REFILL" : "OPERASI")
   ).toUpperCase();
   const movementNote = String(payload.note || "").trim();
+  const supportPusat =
+    normalizeSupplySource(before.SupplySource) === "SUPPORT PUSAT";
 
   let currentQty = safeNumber(old[5]);
   let used = safeNumber(old[7]);
@@ -2210,13 +2519,13 @@ function handleMutasi(body) {
   }
 
   if (type === "in") {
-    currentQty += qty;
+    if (!supportPusat) currentQty += qty;
     if (movementReason === "REFILL") refill += qty;
   } else if (type === "out") {
-    if (currentQty < qty) {
+    if (!supportPusat && currentQty < qty) {
       return { status: "error", message: "Stock not enough" };
     }
-    currentQty -= qty;
+    if (!supportPusat) currentQty -= qty;
     if (movementReason === "OPERASI") used += qty;
   } else {
     return { status: "error", message: "Invalid mutasi type" };
@@ -2235,9 +2544,9 @@ function handleMutasi(body) {
   // Kolom KET hanya menyimpan aktivitas paling baru agar mudah dibaca.
   // Aktivitas sebelumnya tetap tersimpan lengkap di sheet History.
   updated[9] =
-    currentQty <= 0 && type === "out"
+    !supportPusat && currentQty <= 0 && type === "out"
       ? movementDescription + " • WARNING: STOK HABIS — SEGERA REFILL"
-      : movementDescription;
+      : (supportPusat ? "SUPPORT PUSAT • " : "") + movementDescription;
 
   sheet.getRange(idx + 1, 1, 1, MASTER_HEADERS.length).setValues([updated]);
   upsertStockWarning(
@@ -3216,10 +3525,9 @@ function doGet(e) {
     if (action === "monthlyBackupStatus") return cors(getMonthlyBackupStatus());
     if (action === "pdf") return cors(exportPdf(sheetName));
 
+    // GET harus read-only. Normalisasi header dan sinkronisasi TotalQty
+    // dilakukan saat setup/mutasi agar pembacaan dashboard tetap cepat.
     const sheet = resolveDataSheet(req.parameter);
-    normalizeSheet(sheet);
-    syncTotalQty(sheet);
-
     const rows = sheet.getDataRange().getValues();
     return cors({
       status: "success",
@@ -3243,6 +3551,7 @@ function doPost(e) {
       return cors(autoBackupMonthly(Boolean(payload.force)));
     }
     if (payload.action === "importExternal") return cors(importExternalSheet(payload));
+    if (payload.action === "importStockExcel") return cors(importStockExcelBatch(payload));
     if (payload.action === "customerBulkImport") return cors(bulkImportCustomers(payload));
     if (payload.action === "customerDecision") return cors(updateCustomerDecision(payload));
     if (payload.action === "customerUpsert") return cors(upsertCustomer(payload));

@@ -31,6 +31,7 @@ import {
   LoaderCircle,
   Check,
   ChevronDown,
+  ChevronUp,
   Table2,
   LayoutGrid,
   ClipboardCheck,
@@ -39,6 +40,8 @@ import {
   BellRing,
   ScanLine,
   Warehouse,
+  StickyNote,
+  UploadCloud,
   X,
 } from "lucide-react";
 
@@ -65,6 +68,7 @@ import {
   type StockImplantCategory,
 } from "@/lib/stockCategories";
 import { toast } from "sonner";
+import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 
 /* ================= TYPES ================= */
 type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
@@ -184,7 +188,12 @@ export default function StockTablePremium({
   }, []);
 
   const handleInitialStockLoad = useCallback((rows: StockRow[]) => {
-    if (rows.some((row) => Number(row.TotalQty || 0) <= 1)) {
+    if (
+      rows.some(
+        (row) =>
+          !isDiscontinuedStock(row) && !isSupportCenterStock(row) && Number(row.TotalQty || 0) <= 1
+      )
+    ) {
       setLowStockAlertOpen(true);
     }
   }, []);
@@ -230,6 +239,7 @@ export default function StockTablePremium({
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyNo, setHistoryNo] = useState<number | null>(null);
+  const [noteRow, setNoteRow] = useState<StockRow | null>(null);
   const [movementHistory, setMovementHistory] = useState<HistoryRow[]>([]);
   const [movementDocuments, setMovementDocuments] = useState<OnlineHandover[]>([]);
   const [movementHistoryLoading, setMovementHistoryLoading] = useState(true);
@@ -283,8 +293,9 @@ export default function StockTablePremium({
       const stockQty = toSafeNumber(r.TotalQty);
       const matchesStockStatus =
         stockStatusFilter === "ALL" ||
-        (stockStatusFilter === "OUT" && stockQty <= 0) ||
+        (!isDiscontinuedStock(r) && !isSupportCenterStock(r) && stockStatusFilter === "OUT" && stockQty <= 0) ||
         (stockStatusFilter === "LOW" &&
+          !isDiscontinuedStock(r) && !isSupportCenterStock(r) &&
           stockQty > 0 &&
           stockQty <= lowStockThreshold);
 
@@ -321,7 +332,7 @@ export default function StockTablePremium({
     return filteredData.reduce(
       (acc, r) => {
         acc.count += 1;
-        acc.qty += toSafeNumber(r.Qty);
+        acc.qty += isSupportCenterStock(r) ? 0 : toSafeNumber(r.TotalQty);
         acc.used += toSafeNumber(r.TERPAKAI);
         acc.refill += toSafeNumber(r.REFILL);
         return acc;
@@ -340,7 +351,9 @@ export default function StockTablePremium({
       const brand = String(row.Brand ?? "").trim().toUpperCase();
       if (brand !== "NORMMED" && brand !== "ZIMMER") return acc;
       acc[brand].count += 1;
-      acc[brand].available += toSafeNumber(row.TotalQty);
+      acc[brand].available += isSupportCenterStock(row)
+        ? 0
+        : toSafeNumber(row.TotalQty);
       acc[brand].used += toSafeNumber(row.TERPAKAI);
       acc[brand].refill += toSafeNumber(row.REFILL);
       return acc;
@@ -497,7 +510,11 @@ export default function StockTablePremium({
 
   const lowStockAlertCount = useMemo(
     () =>
-      data.filter((row) => Number(row.TotalQty || 0) <= lowStockThreshold)
+      data.filter(
+        (row) =>
+          !isDiscontinuedStock(row) && !isSupportCenterStock(row) &&
+          Number(row.TotalQty || 0) <= lowStockThreshold
+      )
         .length,
     [data, lowStockThreshold]
   );
@@ -600,7 +617,7 @@ export default function StockTablePremium({
             </p>
           </div>
 
-          <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-5 sm:overflow-visible sm:px-0 sm:pb-0">
+          <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-6 sm:overflow-visible sm:px-0 sm:pb-0">
           {onOpenScanner && (
             <button
               type="button"
@@ -620,6 +637,10 @@ export default function StockTablePremium({
             <FileSpreadsheet size={16} />
             <span className="sm:hidden">Export Excel</span>
           </button>
+          <Link href="/upload-stock" className="inline-flex min-w-28 shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:min-w-0 sm:text-[11px]" title="Import Excel ke Google Sheet">
+            <UploadCloud size={16} />
+            <span className="sm:hidden">Import Excel</span>
+          </Link>
           <button
             onClick={() => setOpnameOpen(true)}
             className="inline-flex min-w-[92px] shrink-0 snap-start items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/10 p-2.5 text-[10px] font-semibold hover:bg-white/20 sm:min-w-0 sm:text-[11px]"
@@ -680,6 +701,12 @@ export default function StockTablePremium({
         >
           <RefreshCcw size={14} className={loading ? "animate-spin" : ""} /> Refresh
         </button>
+        <Link
+          href="/upload-stock"
+          className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-bold text-zinc-600 dark:text-zinc-300"
+        >
+          <UploadCloud size={14} /> Import
+        </Link>
         <button
           type="button"
           onClick={() => {
@@ -744,7 +771,7 @@ export default function StockTablePremium({
       </div>
 
       {/* FILTERS */}
-      <div className={`sticky top-0 rounded-lg border bg-white p-2.5 shadow-sm dark:bg-zinc-900 sm:static sm:rounded-xl sm:bg-zinc-50 sm:shadow-none dark:sm:bg-zinc-800/50 ${
+      <div className={`sticky top-0 rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:static sm:bg-zinc-50 sm:p-3 sm:shadow-none dark:sm:bg-zinc-800/50 ${
         mobileFiltersOpen ? "z-60" : "z-30"
       }`}>
         <div className="mb-2 hidden flex-wrap items-center justify-between gap-2 px-0.5 sm:flex">
@@ -769,21 +796,21 @@ export default function StockTablePremium({
             Reset filter
           </button>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(280px,1fr)_150px_190px_110px_auto]">
-        <div className="grid grid-cols-[minmax(0,1fr)_94px] gap-2 sm:block">
+        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(280px,1fr)_150px_190px_130px_auto]">
+        <div className="grid grid-cols-[minmax(0,1fr)_100px] gap-2 sm:block">
           <label className="relative block">
             <Search size={16} className="pointer-events-none absolute left-3 top-3.5 text-zinc-400" />
             <input
               value={scannedValue || search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Cari nama, REF, atau LOT..."
-              className="h-15 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-9 text-sm font-medium outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-blue-950"
+              className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-9 text-sm font-medium outline-none transition placeholder:text-zinc-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-zinc-700 dark:bg-zinc-900 dark:focus:ring-blue-950 sm:h-11 sm:rounded-lg"
             />
             {search && !scannedValue && (
               <button
                 type="button"
                 onClick={() => setSearch("")}
-                className="absolute right-1.5 top-1.5 flex size-8 items-center justify-center rounded-md text-zinc-400 hover:bg-slate-100 hover:text-zinc-700 dark:hover:bg-zinc-800"
+                className="absolute right-2 top-2 flex size-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-slate-100 hover:text-zinc-700 dark:hover:bg-zinc-800 sm:right-1.5 sm:top-1.5"
                 aria-label="Hapus pencarian"
               >
                 <X size={14} />
@@ -793,7 +820,7 @@ export default function StockTablePremium({
           <button
             type="button"
             onClick={() => setMobileFiltersOpen((value) => !value)}
-            className={`relative inline-flex h-11 items-center justify-center gap-1.5 rounded-lg border text-[10px] font-black sm:hidden ${
+            className={`relative inline-flex h-12 items-center justify-center gap-1.5 rounded-xl border text-[10px] font-black shadow-sm sm:hidden ${
               mobileFiltersOpen || activeFilterCount > 0
                 ? "border-blue-600 bg-blue-600 text-white"
                 : "border-slate-300 bg-slate-100 text-slate-700"
@@ -845,11 +872,11 @@ export default function StockTablePremium({
           }}
           className={`${
             mobileFiltersOpen
-              ? "fixed inset-x-3 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-50 grid max-h-[60dvh] gap-3 overflow-y-auto rounded-xl border bg-white p-3 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
+              ? "fixed inset-x-2 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 grid max-h-[calc(100dvh-8rem)] gap-3 overflow-y-auto rounded-2xl border bg-white p-3 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
               : "hidden"
           } sm:contents`}
         >
-        <div className="flex items-center justify-between border-b pb-2 sm:hidden">
+        <div className="sticky -top-3 z-10 -mx-3 flex items-center justify-between border-b bg-white px-3 pb-3 pt-3 dark:bg-zinc-900 sm:hidden">
           <div>
             <p className="text-sm font-black">Filter Stock</p>
             <p className="text-[9px] text-zinc-500">
@@ -859,7 +886,7 @@ export default function StockTablePremium({
           <button
             type="button"
             onClick={() => setMobileFiltersOpen(false)}
-            className="flex size-9 items-center justify-center rounded-4xl border text-zinc-500"
+            className="flex size-9 items-center justify-center rounded-xl border text-zinc-500"
             aria-label="Tutup panel filter"
           >
             <X size={16} />
@@ -903,7 +930,7 @@ export default function StockTablePremium({
           <option value="LOT">Hanya LOT</option>
           <option value="NAMA">Hanya nama</option>
         </select>
-        <div className="relative grid h-16 grid-cols-2 overflow-hidden rounded-lg border border-slate-300 bg-slate-100 p-1 dark:border-zinc-700 dark:bg-zinc-800">
+        <div className="relative grid h-11 grid-cols-2 overflow-hidden rounded-lg border border-slate-300 bg-slate-100 p-1 dark:border-zinc-700 dark:bg-zinc-800">
           <motion.span
             aria-hidden="true"
             className="absolute bottom-1 left-1 top-1 w-[calc(50%-0.25rem)] rounded-md bg-zinc-900 shadow-sm dark:bg-white"
@@ -990,12 +1017,27 @@ export default function StockTablePremium({
         <button
           type="button"
           onClick={() => setMobileFiltersOpen(false)}
-          className="h-11 rounded-lg bg-blue-600 text-xs font-black text-white sm:hidden"
+          className="sticky -bottom-3 z-10 -mx-3 mb-[-0.75rem] h-13 rounded-b-2xl border-t border-blue-500 bg-blue-600 text-xs font-black text-white shadow-[0_-8px_20px_rgba(255,255,255,0.9)] dark:shadow-[0_-8px_20px_rgba(24,24,27,0.9)] sm:hidden"
         >
           Terapkan Filter · {filteredData.length} data
         </button>
         </motion.div>
         </div>
+        {activeFilterCount > 0 && (
+          <div className="mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5 sm:hidden">
+            {brandFilters.map((value) => (
+              <FilterChip key={value} label={value === "NORMMED" ? "Normmed" : "Zimmer"} onRemove={() => setBrandFilters(brandFilters.filter((item) => item !== value))} />
+            ))}
+            {implantFilters.map((value) => (
+              <FilterChip key={value} label={STOCK_IMPLANT_CATEGORY_LABELS[value]} onRemove={() => setImplantFilters(implantFilters.filter((item) => item !== value))} />
+            ))}
+            {stockStatusFilter !== "ALL" && (
+              <FilterChip label={stockStatusFilter === "LOW" ? "Stok menipis" : "Stok habis"} onRemove={() => setStockStatusFilter("ALL")} />
+            )}
+            {mode !== "ALL" && <FilterChip label={`Cari: ${mode}`} onRemove={() => setMode("ALL")} />}
+            <button type="button" onClick={() => { setBrandFilters([]); setImplantFilters([]); setStockStatusFilter("ALL"); setMode("ALL"); }} className="shrink-0 px-2 py-1 text-[9px] font-black text-blue-600">Reset</button>
+          </div>
+        )}
       </div>
       <QuickSearch
         data={data}
@@ -1090,7 +1132,7 @@ export default function StockTablePremium({
                     "Total",
                     "Terpakai",
                     "Refill",
-                    "Keterangan",
+                    "Notes",
                   ].map((h) => (
                     <th
                       key={h}
@@ -1132,11 +1174,11 @@ export default function StockTablePremium({
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.15 }}
-                      className="
-                border-b last:border-b-0
-                hover:bg-zinc-50 dark:hover:bg-zinc-800
-                transition-colors
-              "
+                      className={`border-b transition-colors last:border-b-0 ${
+                        isSupportCenterStock(r)
+                          ? "border-violet-200 bg-violet-50/80 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/25 dark:hover:bg-violet-950/40"
+                          : "hover:bg-emerald-50/60 dark:hover:bg-emerald-950/20"
+                      }`}
                     >
                       {/* REF */}
                       <td className="px-3 py-2 text-zinc-600">
@@ -1153,7 +1195,16 @@ export default function StockTablePremium({
                       </td>
 
                       <td className="px-3 py-2">
-                        <Badge variant="secondary">{r.Brand || "-"}</Badge>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge variant="secondary">{r.Brand || "-"}</Badge>
+                          <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-black ${
+                            isSupportCenterStock(r)
+                              ? "bg-violet-600 text-white"
+                              : "bg-emerald-600 text-white"
+                          }`}>
+                            {isSupportCenterStock(r) ? "SUPPORT PUSAT" : "OFFICE"}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Batch */}
@@ -1187,14 +1238,17 @@ export default function StockTablePremium({
                         <Badge variant="secondary">{r.REFILL}</Badge>
                       </td>
 
-                      {/* Keterangan */}
-                      <td
-                        className="max-w-[260px] px-3 py-2 text-xs leading-5 text-zinc-500"
-                        title={latestDescription(r.KET)}
-                      >
-                        <span className="line-clamp-2">
-                          {latestDescription(r.KET) || "-"}
-                        </span>
+                      {/* Notes */}
+                      <td className="px-3 py-2">
+                        {latestDescription(r.KET) ? (
+                          <button
+                            type="button"
+                            onClick={() => setNoteRow(r)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                          >
+                            <StickyNote size={12} /> Notes
+                          </button>
+                        ) : <span className="text-zinc-300">-</span>}
                       </td>
 
                       {/* ================= ACTION ================= */}
@@ -1276,13 +1330,17 @@ export default function StockTablePremium({
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             className={`overflow-hidden rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
-              r.TotalQty <= 0
+              isSupportCenterStock(r)
+                ? "border-violet-400 bg-violet-50 shadow-violet-100 hover:border-violet-600 dark:border-violet-800 dark:bg-violet-950/25 dark:shadow-none"
+                : r.TotalQty <= 0
                 ? "border-red-400 bg-red-50 shadow-red-100 hover:border-red-600 dark:border-red-800 dark:bg-red-950/25 dark:shadow-none"
                 : "border-slate-300 bg-white hover:border-blue-300 dark:border-zinc-700 dark:bg-zinc-900"
             }`}
           >
             <div className={`h-1.5 ${
-              r.TotalQty <= 0
+              isSupportCenterStock(r)
+                ? "bg-violet-600"
+                : r.TotalQty <= 0
                 ? "bg-red-600"
                 : r.Brand === "NORMMED"
                 ? "bg-emerald-600"
@@ -1291,10 +1349,8 @@ export default function StockTablePremium({
                 : "bg-zinc-500"
             }`} />
             <div className="p-3.5 sm:p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap gap-1.5">
-                  <span className={`rounded-md px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide ${
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className={`inline-flex h-7 shrink-0 items-center rounded-lg px-2.5 text-[9px] font-black uppercase tracking-wide ${
                     r.Brand === "NORMMED"
                       ? "bg-emerald-600 text-white"
                       : r.Brand === "ZIMMER"
@@ -1303,34 +1359,49 @@ export default function StockTablePremium({
                   }`}>
                     {r.Brand || "Tanpa brand"}
                   </span>
-                  <span className="rounded-md bg-slate-200 px-2.5 py-1 text-[9px] font-bold uppercase text-slate-800 dark:bg-zinc-700 dark:text-zinc-100">
+                  <span className="inline-flex h-7 min-w-0 max-w-[52%] items-center truncate rounded-lg bg-slate-200 px-2.5 text-[9px] font-black uppercase text-slate-800 dark:bg-zinc-700 dark:text-zinc-100">
                     {r.Implant || "Tanpa kategori"}
                   </span>
-                </div>
-                <div className="mt-2 line-clamp-2 min-h-10 text-sm font-black uppercase leading-5 tracking-[0.01em]">
-                  {highlight(r.Deskripsi)}
-                </div>
+                  <span className={`order-4 ml-auto inline-flex h-7 shrink-0 items-center rounded-lg border px-2.5 text-center text-[9px] font-black uppercase ${
+                    isSupportCenterStock(r)
+                      ? "border-violet-600 bg-violet-600 text-white"
+                      : isDiscontinuedStock(r)
+                      ? "border-zinc-500 bg-zinc-600 text-white"
+                      : r.TotalQty <= 0
+                      ? "border-red-700 bg-red-600 text-white"
+                      : r.TotalQty <= lowStockThreshold
+                      ? "border-amber-600 bg-amber-500 text-white"
+                      : "border-emerald-700 bg-emerald-600 text-white"
+                  }`}>
+                    {isSupportCenterStock(r)
+                      ? "Support Pusat"
+                      : isDiscontinuedStock(r)
+                      ? "Discontinue"
+                      : r.TotalQty <= 0
+                      ? "Habis"
+                      : r.TotalQty <= lowStockThreshold
+                      ? "Perlu Refill"
+                      : "Aman"}
+                  </span>
+                  {latestDescription(r.KET) && (
+                    <button
+                      type="button"
+                      onClick={() => setNoteRow(r)}
+                      className="order-3 inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[9px] font-black uppercase text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                    >
+                      <StickyNote size={11} /> Notes
+                    </button>
+                  )}
               </div>
-              <div className={`shrink-0 rounded-md border px-2.5 py-1 text-center text-[9px] font-bold ${
-                r.TotalQty <= 0
-                  ? "border-red-700 bg-red-600 text-white"
-                  : r.TotalQty <= lowStockThreshold
-                  ? "border-amber-600 bg-amber-500 text-white"
-                  : "border-emerald-700 bg-emerald-600 text-white"
-              }`}>
-                {r.TotalQty <= 0
-                  ? "Habis"
-                  : r.TotalQty <= lowStockThreshold
-                  ? "Perlu Refill"
-                  : "Aman"}
+              <div className="mt-2 line-clamp-2 min-h-10 text-sm font-black uppercase leading-5 tracking-[0.01em]">
+                {highlight(r.Deskripsi)}
               </div>
-            </div>
 
             <div className="mt-3 grid grid-cols-3 gap-1.5">
-              <div className="rounded-lg bg-slate-100 px-2 py-2.5 dark:bg-zinc-800">
-                <div className="text-[8px] font-bold uppercase text-zinc-500">Stok</div>
+              <div className={`rounded-lg px-2 py-2.5 ${isSupportCenterStock(r) ? "bg-violet-100 dark:bg-violet-950/40" : "bg-emerald-50 dark:bg-emerald-950/25"}`}>
+                <div className={`text-[8px] font-bold uppercase ${isSupportCenterStock(r) ? "text-violet-600" : "text-emerald-600"}`}>{isSupportCenterStock(r) ? "Stok Pusat" : "Stok Office"}</div>
                 <div className={`mt-1 text-base font-black ${
-                  r.TotalQty <= 0 ? "text-red-600" : "text-zinc-900 dark:text-white"
+                  isSupportCenterStock(r) ? "text-violet-600" : r.TotalQty <= 0 ? "text-red-600" : "text-zinc-900 dark:text-white"
                 }`}>{r.TotalQty} Pcs</div>
               </div>
               <div className="rounded-lg bg-red-50 px-2 py-2.5 dark:bg-red-950/25">
@@ -1342,13 +1413,6 @@ export default function StockTablePremium({
                 <div className="mt-1 text-base font-black text-amber-500">{r.REFILL || 0} Pcs</div>
               </div>
             </div>
-
-            {latestDescription(r.KET) && (
-              <div className="mt-2 line-clamp-2 rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2 text-[10px] leading-4 text-zinc-600 dark:border-blue-950 dark:bg-blue-950/20 dark:text-zinc-300">
-                <span className="font-bold text-blue-700 dark:text-blue-300">Update: </span>
-                {latestDescription(r.KET)}
-              </div>
-            )}
 
             <div className="mt-3 border-t pt-3">
               <div className="grid grid-cols-2 gap-2">
@@ -1411,55 +1475,39 @@ export default function StockTablePremium({
         </button>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t bg-white/95 px-[max(0.25rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden">
-        <button
-          type="button"
-          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
-        >
-          <Layers3 size={19} />
-          Atas
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            document
-              .getElementById("stock-list")
-              ?.scrollIntoView({ behavior: "smooth", block: "start" })
-          }
-          className="mx-0.5 flex min-h-12 -translate-y-1 flex-col items-center justify-center gap-0.5 rounded-md bg-blue-600 text-[9px] font-black text-white shadow-md shadow-blue-200 dark:shadow-none"
-        >
-          <ClipboardCheck size={19} />
-          Stok
-        </button>
-        <Link
-          href="/logistik"
-          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
-        >
-          <Warehouse size={19} />
-          Logistik
-        </Link>
-        <Link
-          href="/serah-terima"
-          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
-        >
-          <ClipboardSignature size={19} />
-          Serah
-        </Link>
-        <Link
-          href="/rumah-sakit"
-          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
-        >
-          <Hospital size={19} />
-          Stock RS
-        </Link>
-        <Link
-          href="/histori-tabel"
-          className="flex min-h-12 flex-col items-center justify-center gap-0.5 text-[9px] font-semibold text-zinc-500"
-        >
-          <NotebookTabs size={19} />
-          Riwayat
-        </Link>
+      <button
+        type="button"
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        className="fixed right-3 z-39 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white/95 text-slate-600 shadow-lg backdrop-blur active:scale-95 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-300 sm:hidden"
+        style={{ bottom: "calc(5.25rem + env(safe-area-inset-bottom))" }}
+        aria-label="Kembali ke atas"
+        title="Kembali ke atas"
+      >
+        <ChevronUp size={18} strokeWidth={2.5} />
+      </button>
+
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.1)] backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden" aria-label="Navigasi utama Stock Implant">
+        <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
+          <button
+            type="button"
+            onClick={() =>
+              document
+                .getElementById("stock-list")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[9px] font-black text-white shadow-sm shadow-blue-200 active:scale-[0.97] dark:shadow-none"
+            aria-current="page"
+          >
+            <span className="flex size-6 items-center justify-center rounded-lg bg-white/15">
+              <ClipboardCheck size={16} strokeWidth={2.4} />
+            </span>
+            <span>Stok</span>
+          </button>
+          <MobileNavLink href="/logistik" label="Logistik" icon={<Warehouse size={17} />} />
+          <MobileNavLink href="/serah-terima" label="Serah Terima" icon={<ClipboardSignature size={17} />} />
+          <MobileNavLink href="/rumah-sakit" label="Stock RS" icon={<Hospital size={17} />} />
+          <MobileNavLink href="/histori-tabel" label="Riwayat" icon={<NotebookTabs size={17} />} />
+        </div>
       </nav>
 
       {/* EDIT */}
@@ -1523,6 +1571,49 @@ export default function StockTablePremium({
       />
 
       <AnimatePresence>
+        {noteRow && (
+          <motion.div
+            className="fixed inset-0 z-[10040] flex items-end justify-center bg-zinc-950/35 p-3 backdrop-blur-[2px] sm:items-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setNoteRow(null);
+            }}
+          >
+            <motion.section
+              initial={{ opacity: 0, y: 24, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.98 }}
+              transition={{ duration: 0.18 }}
+              className="w-full max-w-md overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-2xl dark:border-blue-900 dark:bg-zinc-900"
+            >
+              <header className="flex items-start justify-between gap-3 border-b bg-blue-50 p-4 dark:bg-blue-950/30">
+                <div className="flex min-w-0 gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><StickyNote size={18} /></span>
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-blue-600">Notes Implant</p>
+                    <p className="mt-1 truncate text-sm font-black">{noteRow.NoStok || "Tanpa REF"}</p>
+                    <p className="mt-0.5 line-clamp-1 text-[10px] text-zinc-500">{noteRow.Deskripsi}</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setNoteRow(null)} className="rounded-full border bg-white p-2 text-zinc-500 dark:bg-zinc-900" aria-label="Tutup notes"><X size={16} /></button>
+              </header>
+              <div className="p-4">
+                <p className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-sm leading-6 text-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                  {latestDescription(noteRow.KET)}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[9px] font-bold uppercase text-zinc-500">
+                  <span className="rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800">{noteRow.Brand || "Tanpa brand"}</span>
+                  <span className="rounded-md bg-zinc-100 px-2 py-1 dark:bg-zinc-800">{noteRow.Implant || "Tanpa kategori"}</span>
+                </div>
+              </div>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {timelineOpen && (
           <motion.div
             className="fixed inset-0 z-10030 flex items-end justify-center bg-slate-950/55 backdrop-blur-sm sm:items-center sm:p-4"
@@ -1570,8 +1661,13 @@ export default function StockTablePremium({
 
               <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:bg-zinc-950 sm:p-5">
                 {movementHistoryLoading ? (
-                  <div className="py-12 text-center text-sm text-zinc-400">
-                    Memuat pergerakan implant…
+                  <div className="animate-pulse space-y-2" aria-label="Memuat pergerakan implant">
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <div key={index} className="flex gap-3 rounded-xl border bg-white p-3 dark:bg-zinc-900">
+                        <div className="size-9 shrink-0 rounded-xl bg-slate-200 dark:bg-zinc-800" />
+                        <div className="min-w-0 flex-1"><div className="h-3 w-2/3 rounded bg-slate-200 dark:bg-zinc-800" /><div className="mt-2 h-3 w-1/3 rounded bg-slate-100 dark:bg-zinc-800" /></div>
+                      </div>
+                    ))}
                   </div>
                 ) : movementEntries.length === 0 ? (
                   <div className="rounded-2xl border border-dashed bg-white px-4 py-10 text-center dark:bg-zinc-900">
@@ -1661,7 +1757,7 @@ function ChecklistFilter({
   };
 
   return (
-    <details className="group relative">
+    <details className="group relative rounded-xl max-sm:border max-sm:border-slate-200 max-sm:bg-slate-50 max-sm:p-1.5 dark:max-sm:border-zinc-800 dark:max-sm:bg-zinc-950/40">
       <summary className="flex h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 text-xs font-bold dark:border-zinc-700 dark:bg-zinc-900 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">{summary}</span>
         <span className="flex shrink-0 items-center gap-1">
@@ -1677,7 +1773,7 @@ function ChecklistFilter({
         </span>
       </summary>
 
-      <div className="absolute right-0 top-12 z-40 w-full min-w-56 overflow-hidden rounded-lg border bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="mt-1.5 w-full overflow-hidden rounded-lg border bg-white shadow-sm sm:absolute sm:right-0 sm:top-12 sm:z-40 sm:mt-0 sm:min-w-56 sm:shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
         <div className="flex items-center justify-between border-b px-3 py-2">
           <span className="text-xs font-bold">{label}</span>
           {values.length > 0 && (
@@ -1727,6 +1823,50 @@ function ChecklistFilter({
         </div>
       </div>
     </details>
+  );
+}
+
+function FilterChip({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 pl-2 pr-1 text-[9px] font-bold text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+      <span>{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="flex size-5 items-center justify-center rounded-md hover:bg-blue-100 dark:hover:bg-blue-900"
+        aria-label={`Hapus filter ${label}`}
+      >
+        <X size={11} />
+      </button>
+    </span>
+  );
+}
+
+function MobileNavLink({
+  href,
+  label,
+  icon,
+}: {
+  href: string;
+  label: string;
+  icon: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-0.5 text-[9px] font-bold text-zinc-500 transition hover:bg-slate-100 hover:text-slate-900 active:scale-[0.97] dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
+    >
+      <span className="flex size-6 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">
+        {icon}
+      </span>
+      <span className="max-w-full truncate leading-none">{label}</span>
+    </Link>
   );
 }
 

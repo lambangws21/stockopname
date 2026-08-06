@@ -28,6 +28,7 @@ import { gasGET, gasGetHistory } from "@/lib/gas";
 import { listOnlineHandovers } from "@/lib/handover";
 import type { OnlineHandover } from "@/types/handover";
 import type { StockRow } from "@/types/stock";
+import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 import type { HistoryRow } from "@/types/history";
 
 type DashboardListKind =
@@ -73,7 +74,7 @@ export function StockManagementPage() {
           onOpenOpname={() => setOpnameRequest((value) => value + 1)}
         />
 
-        <header className="hidden flex-col gap-4 rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <header className="hidden flex-col gap-4 rounded-2xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:flex sm:p-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-violet-600 text-white shadow-sm shadow-violet-200 dark:shadow-none">
               <Boxes size={22} />
@@ -88,7 +89,7 @@ export function StockManagementPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:flex">
+          <nav className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:flex lg:flex-wrap lg:justify-end" aria-label="Menu Stock Implant">
             <button
               type="button"
               onClick={() => setScanOpen((value) => !value)}
@@ -125,7 +126,7 @@ export function StockManagementPage() {
               <Target size={15} />
               Customer Mapping
             </Link>
-          </div>
+          </nav>
         </header>
 
         <section className={`${scanOpen ? "block" : "hidden"} p-3 sm:p-0`}>
@@ -281,13 +282,14 @@ function DashboardOverview({
   }, [commandOpen]);
 
   const totalStock = stock.reduce(
-    (total, row) => total + stockRemaining(row),
+    (total, row) =>
+      total + (isSupportCenterStock(row) ? 0 : stockRemaining(row)),
     0
   );
   const lowStock = useMemo(
     () =>
       stock
-        .filter((row) => stockRemaining(row) <= 1)
+        .filter((row) => !isDiscontinuedStock(row) && !isSupportCenterStock(row) && stockRemaining(row) <= 1)
         .sort(
           (a, b) =>
             stockRemaining(a) - stockRemaining(b)
@@ -367,17 +369,17 @@ function DashboardOverview({
 
   return (
     <>
-      <section className="relative z-30 overflow-visible bg-[#0f172a] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:rounded-2xl sm:p-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center">
+      <section className="relative z-30 overflow-visible bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:rounded-2xl sm:p-5">
+        <div className="flex flex-col gap-3 sm:gap-4 xl:flex-row xl:items-center">
           <div className="flex items-center gap-3">
-            <span className="flex size-11 items-center justify-center rounded-xl bg-blue-600">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-blue-600 sm:size-11">
               <Boxes size={22} />
             </span>
             <div>
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">
                 Implant inventory
               </p>
-              <h1 className="text-xl font-black">Dashboard Stock</h1>
+              <h1 className="text-lg font-black sm:text-xl">Dashboard Stock</h1>
             </div>
           </div>
 
@@ -395,11 +397,11 @@ function DashboardOverview({
             </kbd>
           </button>
 
-          <div className="flex gap-2">
+          <div className="grid grid-cols-[44px_44px_minmax(0,1fr)_minmax(0,1fr)] gap-2 sm:flex">
             <button
               type="button"
               onClick={() => void refreshDashboard(false)}
-              className="flex h-11 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 text-[9px] font-bold"
+              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-2 text-[9px] font-bold sm:px-3"
               title="Refresh dashboard"
             >
               <RefreshCw size={15} className={loading || refreshing ? "animate-spin" : ""} />
@@ -509,16 +511,16 @@ function DashboardOverview({
             </div>
             <Link
               href="/serah-terima"
-              className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-[10px] font-black sm:flex-none"
+              className="inline-flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-2 text-[9px] font-black sm:flex-none sm:gap-2 sm:px-3 sm:text-[10px]"
             >
-              <ClipboardSignature size={15} /> Serah Terima Baru
+              <ClipboardSignature size={15} /> <span className="truncate sm:hidden">Serah Baru</span><span className="hidden sm:inline">Serah Terima Baru</span>
             </Link>
             <button
               type="button"
               onClick={onOpenOpname}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 text-[10px] font-black sm:flex-none"
+              className="inline-flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2 text-[9px] font-black sm:flex-none sm:gap-2 sm:px-3 sm:text-[10px]"
             >
-              <PackagePlus size={15} /> Stock Opname
+              <PackagePlus size={15} /> <span className="truncate sm:hidden">Opname</span><span className="hidden sm:inline">Stock Opname</span>
             </button>
           </div>
         </div>
@@ -528,7 +530,7 @@ function DashboardOverview({
         <MetricCard
           label="Total stok tersedia"
           value={totalStock}
-          note="Data gudang saat ini"
+          note="Stok fisik office saja"
           icon={<Boxes size={17} />}
           tone="blue"
           loading={loading}
@@ -1014,7 +1016,7 @@ function DashboardDataModal({
   onSelectStock: (row: StockRow) => void;
 }) {
   const config = {
-    STOCK: { title: "Semua Stock Implant", tone: "blue", label: "Stock" },
+    STOCK: { title: "Katalog & Stock Implant", tone: "blue", label: "Stock" },
     USED: { title: "Implant Terpakai", tone: "red", label: "Terpakai" },
     REFILL: { title: "Riwayat Refill", tone: "emerald", label: "Refill" },
     SUPPORT_OUT: { title: "Implant Sedang di Luar", tone: "amber", label: "Di luar" },
@@ -1107,16 +1109,19 @@ function DashboardDataModal({
                 ? Number(row.TERPAKAI || 0)
                 : kind === "REFILL"
                   ? Number(row.REFILL || 0)
-                  : stockRemaining(row);
+                  : isSupportCenterStock(row)
+                    ? 0
+                    : stockRemaining(row);
+            const supportPusat = isSupportCenterStock(row);
             return (
               <button
                 key={`${kind}-${row.No}-${row.Batch}`}
                 type="button"
                 onClick={() => onSelectStock(row)}
-                className="flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:border-blue-300 hover:bg-blue-50/40 dark:hover:bg-blue-950/10"
+                className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition ${supportPusat ? "border-violet-200 bg-violet-50/70 hover:border-violet-400 dark:border-violet-900 dark:bg-violet-950/20" : "border-emerald-100 bg-emerald-50/40 hover:border-emerald-300 dark:border-emerald-950 dark:bg-emerald-950/10"}`}
               >
-                <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-black text-white ${toneClass}`}>
-                  {quantity}
+                <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-black text-white ${supportPusat ? "bg-violet-600" : kind === "STOCK" ? "bg-emerald-600" : toneClass}`}>
+                  {supportPusat && kind === "STOCK" ? "P" : quantity}
                 </span>
                 <span className="min-w-0 flex-1">
                   <b className="block text-xs leading-4">{row.Deskripsi}</b>
@@ -1124,8 +1129,8 @@ function DashboardDataModal({
                     REF {row.NoStok} · LOT {row.Batch || "-"} · {row.Brand || "-"} · {row.Implant || "-"}
                   </span>
                 </span>
-                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[8px] font-black text-zinc-600 dark:bg-zinc-800">
-                  {config.label} {quantity}
+                <span className={`shrink-0 rounded-full px-2 py-1 text-[8px] font-black ${supportPusat ? "bg-violet-600 text-white" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"}`}>
+                  {supportPusat ? "SUPPORT PUSAT" : `${config.label} ${quantity}`}
                 </span>
               </button>
             );
@@ -1218,15 +1223,15 @@ function MetricCard({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className="rounded-2xl border bg-white p-3 text-left shadow-sm transition enabled:hover:-translate-y-0.5 enabled:hover:border-blue-200 enabled:hover:shadow-md disabled:cursor-default dark:border-zinc-800 dark:bg-zinc-900 sm:p-4"
+      className="rounded-xl border bg-white p-2.5 text-left shadow-sm transition enabled:hover:-translate-y-0.5 enabled:hover:border-blue-200 enabled:hover:shadow-md disabled:cursor-default dark:border-zinc-800 dark:bg-zinc-900 sm:rounded-2xl sm:p-4"
     >
       <div className="flex items-start justify-between gap-2">
-        <span className={`flex size-9 items-center justify-center rounded-xl ${tones[tone]}`}>{icon}</span>
-        <span className="text-[8px] font-bold text-zinc-400">LIVE</span>
+        <span className={`flex size-8 items-center justify-center rounded-lg sm:size-9 sm:rounded-xl ${tones[tone]}`}>{icon}</span>
+        <span className="hidden text-[8px] font-bold text-zinc-400 sm:inline">LIVE</span>
       </div>
-      <p className="mt-3 text-[9px] font-bold text-zinc-500 sm:text-[10px]">{label}</p>
-      <p className="mt-1 text-2xl font-black">{loading ? "—" : value.toLocaleString("id-ID")}</p>
-      <p className="mt-1 truncate text-[8px] text-zinc-400 sm:text-[9px]">{note}</p>
+      <p className="mt-2 line-clamp-2 text-[9px] font-bold leading-3 text-zinc-500 sm:mt-3 sm:text-[10px]">{label}</p>
+      <p className="mt-1 text-xl font-black sm:text-2xl">{loading ? "—" : value.toLocaleString("id-ID")}</p>
+      <p className="mt-1 hidden truncate text-[9px] text-zinc-400 sm:block">{note}</p>
     </button>
   );
 }

@@ -1,5 +1,12 @@
-export type HandoverProcedure = "TKR" | "THR" | "BIPOLAR";
+export type HandoverProcedure =
+  | "TKR"
+  | "TKR VANGUARD"
+  | "UKA"
+  | "TKR PERSONA"
+  | "THR"
+  | "BIPOLAR";
 export type HandoverStatus = "DRAFT" | "DIKIRIM" | "DITERIMA";
+export type HandoverBearingOption = "MOP" | "COP" | "COC" | "";
 
 export interface HandoverItem {
   selected: boolean;
@@ -19,6 +26,7 @@ export interface HandoverItem {
   hospitalRemaining?: number;
   locationStatus?: string;
   supplementRequestIds?: string[];
+  supplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
 }
 
 export interface HandoverInstrument {
@@ -30,6 +38,7 @@ export interface HandoverInstrument {
   condition: string;
   note?: string;
   supplementRequestIds?: string[];
+  supplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
 }
 
 export interface HandoverSignatureAudit {
@@ -49,6 +58,7 @@ export interface OnlineHandover {
   UpdatedAt?: string;
   Procedure: HandoverProcedure;
   Brand: string;
+  BearingOption?: HandoverBearingOption;
   Hospital: string;
   Surgeon: string;
   ApprovedBy: string;

@@ -5,9 +5,11 @@ import Link from "next/link";
 import {
   AlertTriangle,
   ArrowLeft,
+  Ban,
   CheckCircle2,
   ChevronDown,
   ClipboardSignature,
+  Copy,
   LoaderCircle,
   LayoutGrid,
   MessageCircle,
@@ -19,6 +21,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getStockWarnings, updateStockWarning } from "@/lib/logistics";
+import { gasGET } from "@/lib/gas";
+import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
+import type { StockRow } from "@/types/stock";
 import type {
   LogisticsWorkflowStatus,
   StockWarningRow,
@@ -31,10 +36,12 @@ const WORKFLOW_OPTIONS: LogisticsWorkflowStatus[] = [
   "SEDANG DIPESAN",
   "DALAM PENGIRIMAN",
   "SELESAI",
+  "DISCONTINUE",
 ];
 
 export default function LogisticsDashboardPage() {
   const [rows, setRows] = useState<StockWarningRow[]>([]);
+  const [stock, setStock] = useState<StockRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingRow, setSavingRow] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -43,11 +50,41 @@ export default function LogisticsDashboardPage() {
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
   const [focus, setFocus] = useState<"LOW" | "REQUEST" | "ORDERED">("LOW");
   const [showMovement, setShowMovement] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await getStockWarnings(false));
+      const [warnings, stockResult] = await Promise.all([
+        getStockWarnings(false),
+        gasGET("Sheet1"),
+      ]);
+      const currentStock = stockResult.data ?? [];
+      const stockByRow = new Map(currentStock.map((item) => [Number(item.No), item]));
+      const stockByIdentity = new Map(
+        currentStock.map((item) => [stockIdentity(item.NoStok, item.Batch), item])
+      );
+      const synchronizedWarnings = warnings
+        .map((warning) => {
+          const current =
+            stockByRow.get(Number(warning.No)) ||
+            stockByIdentity.get(stockIdentity(warning.NoStok, warning.Batch));
+          if (!current || isDiscontinuedStock(current) || isSupportCenterStock(current)) return null;
+          return {
+            ...warning,
+            No: current.No,
+            NoStok: String(current.NoStok || warning.NoStok || ""),
+            Deskripsi: String(current.Deskripsi || warning.Deskripsi || ""),
+            Implant: String(current.Implant || warning.Implant || ""),
+            Brand: String(current.Brand || warning.Brand || ""),
+            Batch: String(current.Batch || warning.Batch || ""),
+            SisaStock: Number(current.TotalQty || 0),
+          } satisfies StockWarningRow;
+        })
+        .filter((item): item is StockWarningRow => Boolean(item))
+        .filter((item) => Number(item.SisaStock) <= 1);
+      setStock(currentStock);
+      setRows(synchronizedWarnings);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Data gagal dimuat");
     } finally {
@@ -110,6 +147,37 @@ export default function LogisticsDashboardPage() {
     [rows]
   );
 
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedKeys.has(warningKey(row))),
+    [rows, selectedKeys]
+  );
+  const allFilteredSelected =
+    filtered.length > 0 &&
+    filtered.every((row) => selectedKeys.has(warningKey(row)));
+  const requestMessage = useMemo(
+    () => buildRequestMessage(selectedRows),
+    [selectedRows]
+  );
+
+  function toggleSelected(row: StockWarningRow) {
+    const key = warningKey(row);
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleAllFiltered() {
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      if (allFilteredSelected) filtered.forEach((row) => next.delete(warningKey(row)));
+      else filtered.forEach((row) => next.add(warningKey(row)));
+      return next;
+    });
+  }
+
   async function save(row: StockWarningRow, patch: Partial<StockWarningRow>) {
     const next = { ...row, ...patch };
     setSavingRow(row.Row);
@@ -123,7 +191,10 @@ export default function LogisticsDashboardPage() {
         LogisticsNote: next.LogisticsNote,
         by: "Logistik",
       });
-      if (updated?.WorkflowStatus === "SELESAI") {
+      if (
+        updated?.WorkflowStatus === "SELESAI" ||
+        updated?.WorkflowStatus === "DISCONTINUE"
+      ) {
         setRows((current) => current.filter((item) => item.Row !== row.Row));
       } else if (updated) {
         setRows((current) =>
@@ -139,8 +210,8 @@ export default function LogisticsDashboardPage() {
   }
 
   return (
-    <main className="min-h-dvh bg-slate-50 pb-8 text-zinc-950 dark:bg-zinc-950 dark:text-white">
-      <header className="bg-[#0f172a] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-6">
+    <main className="min-h-dvh bg-slate-50 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-zinc-950 dark:bg-zinc-950 dark:text-white">
+      <header className="bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:px-6 sm:pb-5 sm:pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-center justify-between">
             <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
@@ -149,7 +220,7 @@ export default function LogisticsDashboardPage() {
             <div className="flex items-center gap-2">
               <Link
                 href="/serah-terima"
-                className="inline-flex h-9 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-3 text-xs font-bold"
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2.5 text-[10px] font-bold sm:gap-2 sm:px-3 sm:text-xs"
               >
                 <ClipboardSignature size={15} /> Serah terima
               </Link>
@@ -162,21 +233,25 @@ export default function LogisticsDashboardPage() {
               </button>
             </div>
           </div>
-          <p className="mt-5 text-[10px] font-bold uppercase tracking-[0.2em] text-blue-300">
+          <p className="mt-4 text-[9px] font-bold uppercase tracking-[0.2em] text-blue-300 sm:mt-5 sm:text-[10px]">
             Implant inventory
           </p>
-          <h1 className="mt-1 text-2xl font-black">Dashboard Logistik</h1>
-          <p className="mt-1 text-xs text-slate-300">Lihat kebutuhan refill dan progres permintaan dalam satu tampilan.</p>
+          <h1 className="mt-1 text-xl font-black sm:text-2xl">Dashboard Logistik</h1>
+          <p className="mt-1 text-[11px] text-slate-300 sm:text-xs">Kebutuhan refill dan progres permintaan.</p>
+          <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2.5 py-1.5 text-[9px] font-bold text-emerald-200 sm:rounded-full sm:px-3 sm:text-[10px]">
+            <span className="size-2 rounded-full bg-emerald-400" />
+            <span className="truncate">Terhubung · {stock.length} stok · {rows.length} perlu tindakan</span>
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-6">
+      <div className="mx-auto max-w-6xl space-y-3 p-3 sm:space-y-4 sm:p-6">
         <section className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:bg-zinc-900">
-          <div className="border-b p-4">
+          <div className="hidden border-b p-4 sm:block">
             <h2 className="text-sm font-black">Ringkasan pekerjaan</h2>
             <p className="mt-0.5 text-[11px] text-zinc-500">Pilih ringkasan untuk melihat item yang perlu ditindaklanjuti.</p>
           </div>
-          <div className="grid gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-px bg-zinc-200 dark:bg-zinc-800">
             <SummaryButton active={focus === "LOW"} onClick={() => setFocus("LOW")} icon={<AlertTriangle size={18} />} label="Stok menipis" value={summary.low} detail={`${summary.critical} stok habis`} tone="red" />
             <SummaryButton active={focus === "REQUEST"} onClick={() => setFocus("REQUEST")} icon={<UserRound size={18} />} label="Perlu diminta" value={summary.request} detail={`${summary.pending} belum diproses`} tone="amber" />
             <SummaryButton active={focus === "ORDERED"} onClick={() => setFocus("ORDERED")} icon={<PackageCheck size={18} />} label="Sudah diminta" value={summary.requested} detail={`${summary.ordered} dipesan · ${summary.shipping} dikirim`} tone="blue" />
@@ -194,8 +269,8 @@ export default function LogisticsDashboardPage() {
           {showMovement && <div className="border-t"><LogisticsMovementSummary /></div>}
         </details>
 
-        <section className="grid gap-2 rounded-2xl border bg-white p-3 dark:bg-zinc-900 sm:grid-cols-[1fr_160px_220px_auto]">
-          <label className="relative">
+        <section className="grid grid-cols-2 gap-2 rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900 sm:grid-cols-[1fr_160px_220px_auto]">
+          <label className="relative col-span-2 sm:col-span-1">
             <Search size={16} className="absolute left-3 top-3.5 text-zinc-400" />
             <input
               value={search}
@@ -215,7 +290,7 @@ export default function LogisticsDashboardPage() {
               <option key={item}>{item}</option>
             ))}
           </select>
-          <div className="grid h-11 grid-cols-2 rounded-xl border bg-slate-50 p-1 dark:bg-zinc-950">
+          <div className="col-span-2 grid h-11 grid-cols-2 rounded-xl border bg-slate-50 p-1 dark:bg-zinc-950 sm:col-span-1">
             <button
               type="button"
               onClick={() => setViewMode("card")}
@@ -246,10 +321,49 @@ export default function LogisticsDashboardPage() {
             <h2 className="text-base font-black">{focus === "LOW" ? "Stok menipis" : focus === "REQUEST" ? "Permintaan perlu diproses" : "Stok sudah diminta"}</h2>
             <p className="text-[10px] text-zinc-500">Menampilkan {filtered.length} item · tekan detail untuk mengubah proses.</p>
           </div>
+          <Link href="/#stock-data" className="shrink-0 text-[10px] font-bold text-blue-600 hover:underline">Lihat semua stok</Link>
         </div>
 
+        <section className="sticky top-2 z-20 overflow-hidden rounded-2xl border border-blue-200 bg-white/95 shadow-lg shadow-blue-950/10 backdrop-blur dark:border-blue-900 dark:bg-zinc-900/95">
+          <div className="flex items-center gap-2 p-2.5 sm:justify-between sm:p-4">
+            <label className="flex cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={allFilteredSelected}
+                onChange={toggleAllFiltered}
+                className="size-5 rounded accent-blue-600"
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-black sm:text-xs">Permintaan Refill</span>
+                <span className="mt-0.5 block whitespace-nowrap text-[9px] text-zinc-500 sm:text-[10px]">{selectedRows.length} dipilih · {filtered.length} tersedia</span>
+              </span>
+            </label>
+            <div className="ml-auto flex shrink-0 gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                disabled={selectedRows.length === 0}
+                onClick={async () => {
+                  await navigator.clipboard.writeText(requestMessage);
+                  toast.success("Daftar permintaan berhasil disalin");
+                }}
+                className="inline-flex size-10 items-center justify-center rounded-xl border text-xs font-bold disabled:opacity-40 sm:w-auto sm:gap-2 sm:px-3"
+              >
+                <Copy size={15} /> <span className="hidden sm:inline">Salin</span>
+              </button>
+              <button
+                type="button"
+                disabled={selectedRows.length === 0}
+                onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(requestMessage)}`, "_blank", "noopener,noreferrer")}
+                className="inline-flex size-10 items-center justify-center rounded-xl bg-emerald-600 text-xs font-bold text-white disabled:opacity-40 sm:w-auto sm:gap-2 sm:px-4"
+              >
+                <MessageCircle size={16} /> <span className="hidden sm:inline">Share WhatsApp</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
         {loading ? (
-          <div className="flex justify-center py-16"><LoaderCircle className="animate-spin text-blue-600" /></div>
+          <LogisticsListSkeleton />
         ) : filtered.length === 0 ? (
           <div className="rounded-2xl border border-dashed bg-white p-10 text-center text-sm text-zinc-500 dark:bg-zinc-900">
             Tidak ada pekerjaan logistik sesuai filter.
@@ -265,6 +379,8 @@ export default function LogisticsDashboardPage() {
                   index,
                 ].join("-")}
                 row={row}
+                selected={selectedKeys.has(warningKey(row))}
+                onToggle={() => toggleSelected(row)}
                 saving={savingRow === row.Row}
                 onSave={(patch) => void save(row, patch)}
               />
@@ -276,6 +392,7 @@ export default function LogisticsDashboardPage() {
               <table className="min-w-[1180px] w-full text-left text-xs">
                 <thead className="bg-slate-100 text-[10px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-800">
                   <tr>
+                    <th className="px-3 py-3 text-center">Pilih</th>
                     <th className="px-3 py-3">Status stok</th>
                     <th className="px-3 py-3">REF / Deskripsi</th>
                     <th className="px-3 py-3">Brand</th>
@@ -298,6 +415,8 @@ export default function LogisticsDashboardPage() {
                         index,
                       ].join("-")}
                       row={row}
+                      selected={selectedKeys.has(warningKey(row))}
+                      onToggle={() => toggleSelected(row)}
                       saving={savingRow === row.Row}
                       onSave={(patch) => void save(row, patch)}
                     />
@@ -318,25 +437,34 @@ function SummaryButton({ icon, label, value, detail, tone, active, onClick }: { 
     amber: "text-amber-600",
     blue: "text-blue-600",
   };
-  return <button type="button" onClick={onClick} className={`bg-white p-4 text-left transition dark:bg-zinc-900 ${active ? "inset-ring-2 inset-ring-blue-600" : "hover:bg-slate-50 dark:hover:bg-zinc-800"}`}>
-    <div className="flex items-center justify-between"><span className={styles[tone]}>{icon}</span><b className="text-2xl">{value}</b></div>
-    <p className="mt-3 text-xs font-black">{label}</p><p className="mt-0.5 text-[10px] text-zinc-500">{detail}</p>
+  return <button type="button" onClick={onClick} className={`min-w-0 bg-white p-2.5 text-left transition dark:bg-zinc-900 sm:p-4 ${active ? "inset-ring-2 inset-ring-blue-600" : "hover:bg-slate-50 dark:hover:bg-zinc-800"}`}>
+    <div className="flex items-center justify-between gap-1"><span className={styles[tone]}>{icon}</span><b className="text-lg sm:text-2xl">{value}</b></div>
+    <p className="mt-2 line-clamp-2 text-[9px] font-black leading-3 sm:mt-3 sm:text-xs">{label}</p><p className="mt-0.5 hidden text-[10px] text-zinc-500 sm:block">{detail}</p>
   </button>;
 }
 
-function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: boolean; onSave: (patch: Partial<StockWarningRow>) => void }) {
+function LogisticsCard({ row, selected, onToggle, saving, onSave }: { row: StockWarningRow; selected: boolean; onToggle: () => void; saving: boolean; onSave: (patch: Partial<StockWarningRow>) => void }) {
   const [status, setStatus] = useState<LogisticsWorkflowStatus>(row.WorkflowStatus || "BELUM DIPROSES");
   const [pic, setPic] = useState(row.PIC || "");
   const [target, setTarget] = useState(toDateInput(row.TargetRefill));
   const [note, setNote] = useState(row.LogisticsNote || "");
   const critical = Number(row.SisaStock) <= 0;
-  const message = `⚠️ INFO LOGISTIK STOCK IMPLANT\n${row.NoStok} | ${row.Deskripsi}\n${row.Brand} | ${row.Implant} | LOT ${row.Batch}\nSisa stok: ${row.SisaStock}\nPIC: ${pic || "-"}\nTarget refill: ${target || "-"}\nCatatan: ${note || "-"}`;
+  const message = [
+    "⚠️ *REFILL IMPLANT*",
+    `${row.Brand || "-"} • ${row.NoStok || "Tanpa REF"}`,
+    compactShareName(row.Deskripsi),
+    `Stok: ${Number(row.SisaStock || 0)} pcs`,
+    pic ? `PIC: ${pic}` : "",
+    target ? `Target: ${target}` : "",
+    note ? `Catatan: ${note}` : "",
+  ].filter(Boolean).join("\n");
 
   return (
-    <article className={`overflow-hidden rounded-2xl border border-l-4 bg-white shadow-sm dark:bg-zinc-900 ${critical ? "border-l-red-500" : "border-l-amber-500"}`}>
-      <div className="p-4">
+    <article className={`overflow-hidden rounded-2xl border border-l-4 bg-white shadow-sm transition dark:bg-zinc-900 ${selected ? "ring-2 ring-blue-500" : ""} ${critical ? "border-l-red-500" : "border-l-amber-500"}`}>
+      <div className="p-3 sm:p-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Pilih ${row.NoStok}`} className="mt-0.5 size-5 shrink-0 accent-blue-600" />
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap gap-1.5">
               <span className={`rounded-md px-2 py-1 text-[9px] font-black ${critical ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>{critical ? "HABIS" : "MENIPIS"}</span>
               <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{row.Brand || "-"}</span>
@@ -387,6 +515,18 @@ function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: 
           <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer")} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white sm:col-span-1">
             <MessageCircle size={15} /> WhatsApp
           </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              if (window.confirm("Tandai implant ini discontinue? Item tidak akan muncul lagi pada warning stok.")) {
+                onSave({ WorkflowStatus: "DISCONTINUE", PIC: pic, TargetRefill: target, LogisticsNote: note });
+              }
+            }}
+            className="col-span-2 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-zinc-300 px-3 text-xs font-bold text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 sm:col-span-3 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            <Ban size={15} /> Tandai discontinue
+          </button>
           </div>
         </details>
         {row.InformedAt && <p className="mt-3 text-[10px] text-zinc-400">Sudah diinformasikan oleh {row.InformedBy || "Logistik"}.</p>}
@@ -397,10 +537,14 @@ function LogisticsCard({ row, saving, onSave }: { row: StockWarningRow; saving: 
 
 function LogisticsTableRow({
   row,
+  selected,
+  onToggle,
   saving,
   onSave,
 }: {
   row: StockWarningRow;
+  selected: boolean;
+  onToggle: () => void;
   saving: boolean;
   onSave: (patch: Partial<StockWarningRow>) => void;
 }) {
@@ -413,6 +557,7 @@ function LogisticsTableRow({
 
   return (
     <tr className="border-t align-middle hover:bg-slate-50 dark:hover:bg-zinc-800/50">
+      <td className="px-3 py-3 text-center"><input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Pilih ${row.NoStok}`} className="size-4 accent-blue-600" /></td>
       <td className="px-3 py-3">
         <span
           className={`rounded-full px-2 py-1 text-[9px] font-black ${
@@ -500,4 +645,46 @@ function toDateInput(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
   return date.toISOString().slice(0, 10);
+}
+
+function stockIdentity(ref: unknown, batch: unknown) {
+  return `${String(ref ?? "").trim().toUpperCase()}::${String(batch ?? "").trim().toUpperCase()}`;
+}
+
+function warningKey(row: StockWarningRow) {
+  return `${row.StockSheet || "Sheet1"}:${row.No || 0}:${stockIdentity(row.NoStok, row.Batch)}`;
+}
+
+function buildRequestMessage(rows: StockWarningRow[]) {
+  const lines = [
+    `📦 *REFILL IMPLANT (${rows.length})*`,
+    "",
+  ];
+  rows.forEach((row, index) => {
+    lines.push(
+      `${index + 1}. ${row.Brand || "-"} • ${row.NoStok || "Tanpa REF"} • ${compactShareName(row.Deskripsi)} • stok ${Number(row.SisaStock || 0)}`
+    );
+  });
+  lines.push("", "Mohon diproses.");
+  return lines.join("\n");
+}
+
+function compactShareName(value: unknown) {
+  const name = String(value || "-").trim();
+  return name.length > 48 ? `${name.slice(0, 45)}…` : name;
+}
+
+function LogisticsListSkeleton() {
+  return (
+    <section className="grid animate-pulse gap-3 lg:grid-cols-2" aria-label="Memuat data logistik">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className="rounded-2xl border bg-white p-4 dark:bg-zinc-900">
+          <div className="flex items-center justify-between gap-3"><div className="h-5 w-24 rounded bg-slate-200 dark:bg-zinc-800" /><div className="h-6 w-20 rounded-lg bg-slate-100 dark:bg-zinc-800" /></div>
+          <div className="mt-3 h-3 w-4/5 rounded bg-slate-200 dark:bg-zinc-800" />
+          <div className="mt-2 h-3 w-2/5 rounded bg-slate-100 dark:bg-zinc-800" />
+          <div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: 3 }).map((__, itemIndex) => <div key={itemIndex} className="h-12 rounded-xl bg-slate-100 dark:bg-zinc-800" />)}</div>
+        </div>
+      ))}
+    </section>
+  );
 }

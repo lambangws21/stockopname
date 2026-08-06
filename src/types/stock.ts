@@ -13,6 +13,8 @@ export interface StockRow {
     TERPAKAI: number;
     REFILL: number;
     KET: string;
+    Discontinue?: boolean;
+    SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
   }
   
   // Response standar dari Apps Script
@@ -54,7 +56,9 @@ export interface StockRow {
       TotalQty?: number;
       TERPAKAI?: number;
       REFILL?: number;
-      KET?: string;
+    KET?: string;
+      Discontinue?: boolean;
+      SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
     };
 
   
@@ -80,6 +84,8 @@ export interface StockRow {
     TERPAKAI: number;
     REFILL: number;
     KET: string;
+    Discontinue?: boolean;
+    SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
   }
   
   // export interface StockRow {
@@ -123,6 +129,8 @@ export interface StockRow {
   TERPAKAI: number;
   REFILL: number;
   KET: string;
+  Discontinue?: boolean;
+  SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
 }
 
 /* ================= GAS RESPONSE ================= */
@@ -154,6 +162,8 @@ export interface CreatePayload extends BasePayload {
   TERPAKAI: number;
   REFILL: number;
   KET: string;
+  Discontinue?: boolean;
+  SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
 }
 
 /* ================= UPDATE ================= */

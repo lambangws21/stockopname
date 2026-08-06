@@ -25,8 +25,8 @@ import {
 
 /* ================= TYPES ================= */
 type ChangeInfo = {
-  before: string | number;
-  after: string | number;
+  before: string | number | boolean | undefined;
+  after: string | number | boolean | undefined;
 };
 
 type ChangeMap = Record<number, Partial<Record<keyof StockRow, ChangeInfo>>>;

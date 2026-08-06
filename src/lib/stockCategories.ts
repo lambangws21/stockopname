@@ -1,5 +1,6 @@
 export const STOCK_IMPLANT_CATEGORIES = [
   "TKR",
+  "UKA",
   "BIPOLAR",
   "THR",
   "INSERT TKR",
@@ -22,6 +23,7 @@ export type StockImplantCategory =
 
 export const STOCK_PROCEDURE_CATEGORIES = [
   "TKR",
+  "UKA",
   "THR",
   "BIPOLAR",
 ] as const satisfies readonly StockImplantCategory[];
@@ -36,6 +38,7 @@ export const STOCK_IMPLANT_CATEGORY_LABELS: Record<
   string
 > = {
   TKR: "TKR",
+  UKA: "UKA",
   BIPOLAR: "Bipolar",
   THR: "THR",
   "INSERT TKR": "Insert TKR",

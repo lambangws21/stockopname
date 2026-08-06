@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import type { StockRow } from "@/types/stock";
+import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 
 export default function LowStockAlertModal({
   open,
@@ -34,7 +35,10 @@ export default function LowStockAlertModal({
 
   const warningRows = useMemo(
     () =>
-      rows.filter((row) => Number(row.TotalQty || 0) <= threshold),
+      rows.filter(
+        (row) =>
+          !isDiscontinuedStock(row) && !isSupportCenterStock(row) && Number(row.TotalQty || 0) <= threshold
+      ),
     [rows, threshold]
   );
   const warningBrands = useMemo(
@@ -65,10 +69,12 @@ export default function LowStockAlertModal({
 
   if (!open) return null;
 
-  const outOfStock = rows.filter((row) => Number(row.TotalQty || 0) <= 0);
+  const outOfStock = rows.filter(
+    (row) => !isDiscontinuedStock(row) && !isSupportCenterStock(row) && Number(row.TotalQty || 0) <= 0
+  );
   const lowStock = rows.filter((row) => {
     const qty = Number(row.TotalQty || 0);
-    return qty > 0 && qty <= threshold;
+    return !isDiscontinuedStock(row) && !isSupportCenterStock(row) && qty > 0 && qty <= threshold;
   });
   const activeBrands = warningBrands.filter(
     (brand) => !excludedBrands.has(brand)
@@ -82,19 +88,19 @@ export default function LowStockAlertModal({
 
   return (
     <div className="fixed inset-0 z-[10030] flex items-end justify-center bg-zinc-950/60 backdrop-blur-sm sm:items-center sm:p-4">
-      <section className="flex max-h-[100dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:rounded-3xl">
-        <header className="relative flex items-start justify-between gap-3 border-b bg-[#991b1b] px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-5 sm:py-5">
+      <section className="flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:rounded-3xl">
+        <header className="relative flex items-start justify-between gap-3 border-b bg-[#991b1b] px-4 pb-3 pt-[max(0.9rem,env(safe-area-inset-top))] text-white sm:px-5 sm:py-5">
           <span className="absolute left-1/2 top-2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/30 sm:hidden" />
           <div className="flex gap-3">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25">
-              <AlertTriangle size={23} />
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25 sm:size-11">
+              <AlertTriangle size={21} />
             </span>
             <div>
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-red-200">
                 Perlu tindakan logistik
               </p>
-              <h2 className="mt-0.5 text-lg font-black">Warning Stock Implant</h2>
-              <p className="mt-1 text-xs text-red-50">
+              <h2 className="mt-0.5 text-base font-black sm:text-lg">Warning Stock Implant</h2>
+              <p className="mt-1 hidden text-xs text-red-50 sm:block">
                 Periksa item berikut sebelum kebutuhan operasi berikutnya.
               </p>
             </div>
@@ -109,13 +115,13 @@ export default function LowStockAlertModal({
           </button>
         </header>
 
-        <div className="grid grid-cols-2 gap-2 border-b bg-slate-50 p-3 text-left dark:bg-zinc-950/40">
+        <div className="grid grid-cols-2 gap-2 border-b bg-slate-50 p-2.5 text-left dark:bg-zinc-950/40 sm:p-3">
           <button
             type="button"
             onClick={() => onShowStatus("OUT")}
-            className="rounded-2xl border border-red-100 bg-white px-4 py-3 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-900 dark:hover:bg-red-950/20"
+            className="rounded-xl border border-red-100 bg-white px-3 py-2.5 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-900 dark:hover:bg-red-950/20 sm:rounded-2xl sm:px-4 sm:py-3"
           >
-            <p className="text-2xl font-black text-red-600">
+            <p className="text-xl font-black text-red-600 sm:text-2xl">
               {visibleOutOfStock.length}
             </p>
             <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Stok habis</p>
@@ -124,9 +130,9 @@ export default function LowStockAlertModal({
           <button
             type="button"
             onClick={() => onShowStatus("LOW")}
-            className="rounded-2xl border border-amber-100 bg-white px-4 py-3 hover:bg-amber-50 dark:border-amber-900 dark:bg-zinc-900 dark:hover:bg-amber-950/20"
+            className="rounded-xl border border-amber-100 bg-white px-3 py-2.5 hover:bg-amber-50 dark:border-amber-900 dark:bg-zinc-900 dark:hover:bg-amber-950/20 sm:rounded-2xl sm:px-4 sm:py-3"
           >
-            <p className="text-2xl font-black text-amber-600">
+            <p className="text-xl font-black text-amber-600 sm:text-2xl">
               {visibleLowStock.length}
             </p>
             <p className="text-[10px] font-semibold text-zinc-500">
@@ -136,9 +142,9 @@ export default function LowStockAlertModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50 p-3 dark:bg-zinc-950/50 sm:p-5">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-2.5 dark:bg-zinc-950/50 sm:space-y-4 sm:p-5">
           <section className="overflow-hidden rounded-2xl border bg-white dark:bg-zinc-900">
-            <div className="border-b border-blue-100 bg-white/70 px-3.5 py-3 dark:border-blue-900 dark:bg-zinc-900/60">
+            <div className="hidden border-b border-blue-100 bg-white/70 px-3.5 py-3 dark:border-blue-900 dark:bg-zinc-900/60 sm:block">
               <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
                 Brand stok menipis yang ditampilkan
               </p>
@@ -206,7 +212,7 @@ export default function LowStockAlertModal({
               </button>
             </div>
 
-            <div className="mt-3 rounded-xl border border-blue-100 bg-white/70 p-2.5 dark:border-blue-900 dark:bg-zinc-900/70">
+            {shareExpanded && <div className="mt-3 rounded-xl border border-blue-100 bg-white/70 p-2.5 dark:border-blue-900 dark:bg-zinc-900/70">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-[10px] font-bold text-zinc-600 dark:text-zinc-300">
                   Filter brand stok menipis
@@ -260,7 +266,7 @@ export default function LowStockAlertModal({
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
             {shareExpanded && (
             <>
@@ -343,7 +349,7 @@ export default function LowStockAlertModal({
           )}
         </div>
 
-        <footer className="flex flex-col gap-2 border-t px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 sm:flex-row sm:justify-end sm:px-5 sm:pb-3">
+        <footer className="grid grid-cols-2 gap-2 border-t bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:bg-zinc-900 sm:flex sm:justify-end sm:px-5 sm:pb-3">
           <button
             type="button"
             onClick={onClose}
@@ -404,40 +410,36 @@ function buildLogisticsMessage(
     return qty > 0 && qty <= threshold;
   });
   const lines = [
-    "⚠️ *INFO LOGISTIK — WARNING STOCK IMPLANT*",
-    "",
-    `🔴 Stok habis: ${out.length} item`,
-    `🟠 Stok menipis: ${low.length} item`,
+    "⚠️ *STOK IMPLANT*",
+    `Habis ${out.length} • Menipis ${low.length}`,
   ];
 
   if (out.length) {
-    lines.push("", "*STOK HABIS*");
+    lines.push("", "*HABIS*");
     out.forEach((row, index) => {
       lines.push(formatWarningRow(row, index + 1));
     });
   }
   if (low.length) {
-    lines.push("", "*AKAN HABIS JIKA DIGUNAKAN*");
+    lines.push("", "*MENIPIS*");
     low.forEach((row, index) => {
       lines.push(formatWarningRow(row, index + 1));
     });
   }
   if (note.trim()) {
-    lines.push("", `📝 Catatan logistik: ${note.trim()}`);
+    lines.push("", `Catatan: ${note.trim()}`);
   }
-  lines.push(
-    "",
-    "Mohon segera dicek dan dijadwalkan refill agar kebutuhan operasi tidak terhambat."
-  );
+  lines.push("", "Mohon dicek/refill.");
   return lines.join("\n");
 }
 
 function formatWarningRow(row: StockRow, index: number) {
-  return `${index}. ${row.NoStok || "Tanpa REF"} | ${
-    row.Deskripsi || "Tanpa deskripsi"
-  } | ${row.Brand || "-"} | ${row.Implant || "-"} | LOT ${
-    row.Batch || "-"
-  } | Sisa ${Number(row.TotalQty || 0)}`;
+  return `${index}. ${row.Brand || "-"} • ${row.NoStok || "Tanpa REF"} • ${compactShareName(row.Deskripsi)} • ${Number(row.TotalQty || 0)} pcs`;
+}
+
+function compactShareName(value: unknown) {
+  const name = String(value || "Tanpa deskripsi").trim();
+  return name.length > 48 ? `${name.slice(0, 45)}…` : name;
 }
 
 async function shareWarning(text: string) {
@@ -506,7 +508,7 @@ function AlertGroup({
           return (
           <article
             key={stockRowKey(row)}
-            className={`rounded-2xl border border-l-4 bg-white p-3.5 shadow-sm dark:bg-zinc-900 ${styles} ${
+            className={`rounded-xl border border-l-4 bg-white p-3 shadow-sm dark:bg-zinc-900 sm:rounded-2xl sm:p-3.5 ${styles} ${
               rowSelected ? "" : "opacity-50"
             }`}
           >
@@ -537,16 +539,16 @@ function AlertGroup({
                     {row.Implant || "Tanpa kategori"}
                   </span>
                 </div>
-                <p className="mt-2 text-xs font-black text-zinc-900 dark:text-white">
+                <p className="mt-1.5 text-xs font-black text-zinc-900 dark:text-white sm:mt-2">
                   {row.NoStok || "Tanpa REF"}
                 </p>
                 <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-zinc-600 dark:text-zinc-300">
                   {row.Deskripsi}
                 </p>
-                <p className="mt-1 text-[10px] text-zinc-500">
+                <p className="mt-1 hidden text-[10px] text-zinc-500 sm:block">
                   LOT / Batch: <b>{row.Batch || "-"}</b>
                 </p>
-                <p className={`mt-2 text-[10px] font-semibold ${
+                <p className={`mt-1.5 text-[9px] font-semibold sm:mt-2 sm:text-[10px] ${
                   tone === "red" ? "text-red-600" : "text-amber-600"
                 }`}>
                   {tone === "red"
@@ -554,12 +556,12 @@ function AlertGroup({
                     : "Jika digunakan lagi, stok akan habis."}
                 </p>
               </div>
-              <div className={`shrink-0 rounded-xl px-2.5 py-2 text-center ${
+              <div className={`shrink-0 rounded-lg px-2 py-1.5 text-center sm:rounded-xl sm:px-2.5 sm:py-2 ${
                 tone === "red"
                   ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
                   : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
               }`}>
-                <p className="text-xl font-black">{Number(row.TotalQty || 0)}</p>
+                <p className="text-lg font-black sm:text-xl">{Number(row.TotalQty || 0)}</p>
                 <p className="text-[8px] font-bold uppercase">Sisa</p>
               </div>
             </div>

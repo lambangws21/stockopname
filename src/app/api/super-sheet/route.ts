@@ -7,6 +7,17 @@ const GAS_EXTERNAL_URL = process.env.GAS_SUPER_SHEET_EXTERNAL_URL || "";
 const GAS_READ_TIMEOUT_MS = 25_000;
 const GAS_WRITE_TIMEOUT_MS = 45_000;
 const GAS_TRANSACTION_TIMEOUT_MS = 90_000;
+const GAS_READ_CACHE_MS = 10_000;
+const GAS_STALE_CACHE_MS = 5 * 60_000;
+
+type ReadCacheEntry = {
+  value: unknown;
+  expiresAt: number;
+  staleUntil: number;
+};
+
+const readCache = new Map<string, ReadCacheEntry>();
+const readsInFlight = new Map<string, Promise<unknown>>();
 
 export const maxDuration = 120;
 
@@ -69,7 +80,7 @@ async function fetchGasJson(
   if (lastError instanceof GasProxyError) throw lastError;
   if (lastError instanceof Error && lastError.name === "AbortError") {
     throw new GasProxyError(
-      "Google Apps Script masih memproses transaksi terlalu lama. Periksa status dokumen sebelum mencoba kembali.",
+      "Google Apps Script merespons terlalu lama. Snapshot terakhir tetap digunakan bila tersedia; coba muat ulang beberapa saat lagi.",
       504
     );
   }
@@ -78,6 +89,49 @@ async function fetchGasJson(
       ? `Google Apps Script tidak dapat dihubungi: ${lastError.message}`
       : "Google Apps Script tidak dapat dihubungi."
   );
+}
+
+function refreshGasRead(url: string) {
+  const existing = readsInFlight.get(url);
+  if (existing) return existing;
+
+  const request = fetchGasJson(url, undefined, true)
+    .then((value) => {
+      const now = Date.now();
+      readCache.set(url, {
+        value,
+        expiresAt: now + GAS_READ_CACHE_MS,
+        staleUntil: now + GAS_STALE_CACHE_MS,
+      });
+      return value;
+    })
+    .finally(() => readsInFlight.delete(url));
+
+  readsInFlight.set(url, request);
+  return request;
+}
+
+async function fetchGasRead(url: string) {
+  const cached = readCache.get(url);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  if (cached && cached.staleUntil > now) {
+    void refreshGasRead(url).catch(() => undefined);
+    return cached.value;
+  }
+
+  try {
+    return await refreshGasRead(url);
+  } catch (error) {
+    const fallback = readCache.get(url);
+    if (fallback && fallback.staleUntil > Date.now()) return fallback.value;
+    throw error;
+  }
+}
+
+function clearReadCache() {
+  readCache.clear();
 }
 
 function gasErrorResponse(error: unknown) {
@@ -176,10 +230,8 @@ export async function GET(req: NextRequest) {
       if (sourceSheet) upstreamQuery.set("sourceSheet", sourceSheet);
       if (sourceGid) upstreamQuery.set("sourceGid", sourceGid);
 
-      const raw = (await fetchGasJson(
-        `${gasUrl}?${upstreamQuery.toString()}`,
-        undefined,
-        true
+      const raw = (await fetchGasRead(
+        `${gasUrl}?${upstreamQuery.toString()}`
       )) as { data?: Array<Record<string, unknown>> };
     const rows = Array.isArray(raw?.data)
       ? (raw.data as Array<Record<string, unknown>>)
@@ -201,7 +253,7 @@ export async function GET(req: NextRequest) {
 
     const qs = req.nextUrl.searchParams.toString();
     return NextResponse.json(
-      await fetchGasJson(`${gasUrl}?${qs}`, undefined, true)
+      await fetchGasRead(`${gasUrl}?${qs}`)
     );
   } catch (error) {
     return gasErrorResponse(error);
@@ -222,6 +274,7 @@ export async function POST(req: NextRequest) {
     const timeoutMs = transactionActions.has(action)
       ? GAS_TRANSACTION_TIMEOUT_MS
       : GAS_WRITE_TIMEOUT_MS;
+    clearReadCache();
     if (transactionActions.has(action)) {
       const forwardedFor = req.headers.get("x-forwarded-for");
       body.RequestMeta = {
@@ -250,11 +303,13 @@ export async function POST(req: NextRequest) {
         };
       }
     }
-    return NextResponse.json(await fetchGasJson(gasUrl, {
+    const result = await fetchGasJson(gasUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }, false, timeoutMs));
+    }, false, timeoutMs);
+    clearReadCache();
+    return NextResponse.json(result);
   } catch (error) {
     return gasErrorResponse(error);
   }
@@ -264,7 +319,8 @@ export async function PUT(req: NextRequest) {
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const gasUrl = pickGasUrlForBody(body);
-    return NextResponse.json(await fetchGasJson(gasUrl, {
+    clearReadCache();
+    const result = await fetchGasJson(gasUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -273,7 +329,9 @@ export async function PUT(req: NextRequest) {
         ...body,
         methodOverride: "PUT",
       }),
-    }));
+    });
+    clearReadCache();
+    return NextResponse.json(result);
   } catch (error) {
     return gasErrorResponse(error);
   }
@@ -284,11 +342,14 @@ export async function DELETE(req: NextRequest) {
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const gasUrl = pickGasUrlForBody(body);
-    return NextResponse.json(await fetchGasJson(gasUrl, {
+    clearReadCache();
+    const result = await fetchGasJson(gasUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, methodOverride: "DELETE" }),
-    }));
+    });
+    clearReadCache();
+    return NextResponse.json(result);
   } catch (error) {
     return gasErrorResponse(error);
   }
