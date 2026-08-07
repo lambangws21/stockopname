@@ -17,6 +17,7 @@ import {
   ClipboardSignature,
   FileClock,
   Hospital,
+  LoaderCircle,
   PackagePlus,
   QrCode,
   Search,
@@ -48,6 +49,7 @@ type ScanPayload = {
   ref: string;
   lot?: string;
   exp?: string;
+  gtin?: string;
   raw?: string;
   searchField?: "REF" | "LOT";
 };
@@ -55,7 +57,63 @@ type ScanPayload = {
 export function StockManagementPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [scanResult, setScanResult] = useState<ScanPayload | null>(null);
+  const [scanStock, setScanStock] = useState<StockRow | null>(null);
+  const [scanLookupLoading, setScanLookupLoading] = useState(false);
+  const [scanLookupMessage, setScanLookupMessage] = useState("");
   const [opnameRequest, setOpnameRequest] = useState(0);
+
+  useEffect(() => {
+    if (!scanOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setScanOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [scanOpen]);
+
+  const openDashboardScanner = useCallback(() => {
+    setScanResult(null);
+    setScanStock(null);
+    setScanLookupMessage("");
+    setScanOpen(true);
+  }, []);
+
+  const handleDashboardScan = useCallback(async (payload: ScanPayload) => {
+    setScanResult(payload);
+    setScanStock(null);
+    setScanLookupMessage("");
+    setScanLookupLoading(true);
+    const normalizeCode = (value: unknown) => String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+    try {
+      const response = await fetch("/api/super-sheet?sheet=Sheet1", { cache: "no-store" });
+      const json = await response.json();
+      if (!response.ok || json.status === "error") throw new Error(json.message || "Gagal mengambil data stok");
+      const rows = (Array.isArray(json.data) ? json.data : []) as StockRow[];
+      const ref = normalizeCode(payload.ref);
+      const lot = normalizeCode(payload.lot);
+      const exact = rows.filter((row) =>
+        (!ref || normalizeCode(row.NoStok) === ref) &&
+        (!lot || normalizeCode(row.Batch) === lot)
+      );
+      const lotMatches = lot ? rows.filter((row) => normalizeCode(row.Batch) === lot) : [];
+      const found = exact.length === 1 ? exact[0] : lotMatches.length === 1 ? lotMatches[0] : null;
+      setScanStock(found);
+      if (!found) {
+        setScanLookupMessage(lotMatches.length > 1
+          ? `LOT ${payload.lot} memiliki beberapa varian. Lihat hasilnya di tabel dan pilih REF yang benar.`
+          : "Barcode terbaca, tetapi stok yang sesuai belum ditemukan.");
+      }
+    } catch (error) {
+      setScanLookupMessage(error instanceof Error ? error.message : "Gagal memeriksa stok");
+    } finally {
+      setScanLookupLoading(false);
+    }
+  }, []);
 
   return (
     <main className="min-h-dvh bg-slate-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
@@ -103,11 +161,11 @@ export function StockManagementPage() {
             </Link>
             <button
               type="button"
-              onClick={() => setScanOpen((value) => !value)}
+              onClick={openDashboardScanner}
               className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition hover:bg-zinc-50 dark:hover:bg-zinc-800"
             >
               <QrCode size={15} />
-              {scanOpen ? "Tutup Scan" : "Scan Barcode"}
+              Scan Barcode
             </button>
             <Link
               href="/logistik"
@@ -140,57 +198,6 @@ export function StockManagementPage() {
           </nav>
         </header>
 
-        <section className={`${scanOpen ? "block" : "hidden"} p-3 sm:p-0`}>
-          <div className="rounded-xl border bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="flex items-center gap-3">
-              <span className="flex size-9 items-center justify-center rounded-lg bg-violet-50 text-violet-600 dark:bg-violet-950/40">
-                <QrCode size={17} />
-              </span>
-              <div>
-                <p className="text-sm font-semibold">Barcode implant</p>
-                <p className="text-[11px] text-zinc-500">
-                  Cari REF dan batch secara cepat
-                </p>
-              </div>
-              {scanOpen && (
-                <button
-                  type="button"
-                  onClick={() => setScanOpen(false)}
-                  className="ml-auto inline-flex size-9 items-center justify-center rounded-lg border text-zinc-500 sm:hidden"
-                  aria-label="Tutup scanner"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
-
-            {scanOpen && (
-              <div className="mt-4 border-t pt-4">
-                <Scanner onDetected={setScanResult} />
-              </div>
-            )}
-
-            {scanResult && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-violet-50 px-3 py-2 text-xs dark:bg-violet-950/30">
-                <span><b>REF:</b> {scanResult.ref || "-"}</span>
-                <span><b>LOT:</b> {scanResult.lot || "-"}</span>
-                {scanResult.searchField && (
-                  <span className="rounded-full bg-white px-2 py-1 font-semibold text-violet-700">
-                    Pencarian {scanResult.searchField}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setScanResult(null)}
-                  className="ml-auto inline-flex items-center gap-1 font-semibold text-violet-700"
-                >
-                  <X size={12} /> Hapus
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-
         <div id="stock-data" className="scroll-mt-24">
         <Suspense fallback={<TableSkeleton />}>
           <StockTablePremium
@@ -198,14 +205,32 @@ export function StockManagementPage() {
             externalScan={scanResult}
             title="Stock Management"
             onOpenScanner={() => {
-              setScanOpen(true);
-              window.scrollTo({ top: 0, behavior: "smooth" });
+              openDashboardScanner();
             }}
             opnameRequest={opnameRequest}
           />
         </Suspense>
         </div>
       </div>
+
+      {scanOpen ? <div className="fixed inset-0 z-[120] flex items-end bg-slate-950/70 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Scanner stok implant">
+        <button type="button" className="absolute inset-0 cursor-default" onClick={() => setScanOpen(false)} aria-label="Tutup scanner" />
+        <section className="relative z-10 flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white text-slate-950 shadow-2xl sm:max-w-2xl sm:rounded-3xl">
+          <header className="flex items-center gap-3 border-b px-4 py-3">
+            <span className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><QrCode size={19} /></span>
+            <div className="min-w-0 flex-1"><p className="font-black">{scanResult ? "Hasil Scan Implant" : "Scan Barcode Implant"}</p><p className="text-xs text-slate-500">{scanResult ? "Stok terbaru dari Google Sheet" : "Arahkan QR atau barcode ke tengah kamera"}</p></div>
+            <button type="button" onClick={() => setScanOpen(false)} className="grid size-10 place-items-center rounded-xl border text-slate-600" aria-label="Tutup"><X size={19} /></button>
+          </header>
+          <div className="overflow-y-auto p-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-4">
+            {!scanResult ? <Scanner onDetected={(payload) => void handleDashboardScan(payload)} /> : scanLookupLoading ? <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-sm text-slate-500"><LoaderCircle className="animate-spin text-blue-600" size={30} /> Memeriksa stok implant...</div> : scanStock ? <div className={`overflow-hidden rounded-2xl border-2 ${Number(scanStock.TotalQty || 0) <= 0 ? "border-red-400 bg-red-50" : Number(scanStock.TotalQty || 0) <= 1 ? "border-orange-400 bg-orange-50" : "border-emerald-400 bg-emerald-50"}`}>
+              <div className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-wider text-slate-500">Implant ditemukan</p><h3 className="mt-1 text-base font-black leading-snug">{scanStock.Deskripsi}</h3></div><span className={`shrink-0 rounded-full px-3 py-1 text-[10px] font-black ${Number(scanStock.TotalQty || 0) <= 0 ? "bg-red-600 text-white" : Number(scanStock.TotalQty || 0) <= 1 ? "bg-orange-500 text-white" : "bg-emerald-600 text-white"}`}>{Number(scanStock.TotalQty || 0) <= 0 ? "HABIS" : Number(scanStock.TotalQty || 0) <= 1 ? "TERBATAS" : "TERSEDIA"}</span></div>
+                <div className="mt-4 grid grid-cols-2 gap-2 text-sm"><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">REF</p><p className="font-black">{scanStock.NoStok || "-"}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">LOT</p><p className="font-black">{scanStock.Batch || "Belum diinput"}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">STOK OFFICE</p><p className="text-xl font-black">{Number(scanStock.TotalQty || 0)} pcs</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">BRAND · KATEGORI</p><p className="font-black">{scanStock.Brand || "-"} · {scanStock.Implant || "-"}</p></div></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 border-t border-black/10 p-3"><button type="button" onClick={openDashboardScanner} className="h-11 rounded-xl border border-slate-300 bg-white text-sm font-bold">Scan Lagi</button><button type="button" onClick={() => setScanOpen(false)} className="h-11 rounded-xl bg-slate-950 text-sm font-bold text-white">Lihat di Tabel</button></div>
+            </div> : <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900"><p className="font-black">Stok belum ditemukan</p><p className="mt-1 text-sm">{scanLookupMessage}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={openDashboardScanner} className="h-11 rounded-xl border border-amber-400 bg-white text-sm font-bold">Scan Lagi</button><button type="button" onClick={() => setScanOpen(false)} className="h-11 rounded-xl bg-amber-600 text-sm font-bold text-white">Lihat Tabel</button></div></div>}
+          </div>
+        </section>
+      </div> : null}
     </main>
   );
 }

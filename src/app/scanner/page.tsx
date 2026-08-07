@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import { ArrowLeft, Barcode, CheckCircle2, LoaderCircle, Printer, QrCode, Save, Search, Wrench } from "lucide-react";
+import { ArrowLeft, Barcode, Camera, CheckCircle2, LoaderCircle, Printer, QrCode, Save, Search, Wrench, X } from "lucide-react";
 import { toast } from "sonner";
 import type { StockRow } from "@/types/stock";
 import type { StockWarningRow } from "@/types/logistics";
@@ -12,7 +12,7 @@ import Scanner from "@/components/stock/Scanner";
 
 const MutateModal = dynamic(() => import("@/components/MutateModal"), { ssr: false });
 
-type ScanPayload = { ref: string; lot: string; raw?: string; searchField?: "REF" | "LOT" };
+type ScanPayload = { ref: string; lot: string; gtin?: string; raw?: string; searchField?: "REF" | "LOT" };
 type AliasRow = { RawCode: string; Ref: string; Lot: string; Description?: string; Brand?: string };
 
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
@@ -30,6 +30,7 @@ export default function UniversalScannerPage() {
   const [teachMode, setTeachMode] = useState(false);
   const [mutateOpen, setMutateOpen] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const initialUrlResolved = useRef(false);
 
   const loadStock = useCallback(async () => {
@@ -52,9 +53,29 @@ export default function UniversalScannerPage() {
 
   useEffect(() => { void loadStock(); }, [loadStock]);
 
+  useEffect(() => {
+    if (!scannerOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setScannerOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [scannerOpen]);
+
   const findExact = useCallback((ref: string, lot: string) => {
     const exact = stock.filter((row) => normalize(row.NoStok) === normalize(ref) && normalize(row.Batch) === normalize(lot));
     return exact.length === 1 ? exact[0] : null;
+  }, [stock]);
+
+  const findUniqueByLot = useCallback((lot: string) => {
+    if (!normalize(lot)) return null;
+    const matches = stock.filter((row) => normalize(row.Batch) === normalize(lot));
+    return matches.length === 1 ? matches[0] : null;
   }, [stock]);
 
   useEffect(() => {
@@ -100,17 +121,27 @@ export default function UniversalScannerPage() {
         setQuery(`${found.NoStok} ${found.Batch}`);
         return;
       }
+      const foundByLot = findUniqueByLot(payload.lot);
+      if (foundByLot) {
+        setSelected(foundByLot);
+        setQuery(`${foundByLot.NoStok} ${foundByLot.Batch}`);
+        // QR pabrik umumnya tidak memuat REF internal. Pengguna dapat menyimpan
+        // alias sekali agar scan berikutnya langsung menuju varian yang sama.
+        setTeachMode(Boolean(raw));
+        toast.success(`Implant ditemukan dari LOT ${foundByLot.Batch}`);
+        return;
+      }
       setSelected(null);
-      setQuery([payload.ref, payload.lot].filter(Boolean).join(" "));
+      setQuery([payload.ref, payload.lot || payload.gtin].filter(Boolean).join(" "));
       setTeachMode(Boolean(raw));
     } catch {
-      const found = findExact(payload.ref, payload.lot);
+      const found = findExact(payload.ref, payload.lot) || findUniqueByLot(payload.lot);
       setSelected(found);
-      setTeachMode(!found && Boolean(raw));
+      setTeachMode(Boolean(raw) && (!found || Boolean(payload.gtin)));
     } finally {
       setResolving(false);
     }
-  }, [findExact]);
+  }, [findExact, findUniqueByLot]);
 
   const results = useMemo(() => {
     const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -122,6 +153,14 @@ export default function UniversalScannerPage() {
   }, [query, stock]);
   const selectedWarning = useMemo(() => selected ? warnings.find((warning) => normalize(warning.NoStok) === normalize(selected.NoStok) && normalize(warning.Batch) === normalize(selected.Batch)) : undefined, [selected, warnings]);
   const isRequested = selectedWarning?.WorkflowStatus === "SEDANG DIPESAN" || selectedWarning?.WorkflowStatus === "DALAM PENGIRIMAN";
+
+  function editSearch(value: string) {
+    setQuery(value);
+    setSelected(null);
+    setRecognizedAlias(false);
+    setQrDataUrl("");
+    setTeachMode(Boolean(rawCode));
+  }
 
   async function teachBarcode(row: StockRow) {
     if (!rawCode) return toast.error("Scan barcode terlebih dahulu");
@@ -169,19 +208,22 @@ export default function UniversalScannerPage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-6xl gap-4 p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(340px,.8fr)]">
-        <section className="rounded-2xl border bg-white p-3 shadow-sm sm:p-4">
-          <div className="mb-3 flex items-center gap-2"><Barcode className="text-blue-600" /><div><h2 className="font-black">Arahkan kamera ke label</h2><p className="text-xs text-slate-500">Barcode pabrik yang belum dikenal dapat diajarkan sekali.</p></div></div>
-          <Scanner onDetected={(payload) => void resolveScan(payload)} />
+      <div className="mx-auto max-w-3xl space-y-4 p-3 sm:p-5">
+        <section className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-blue-600 text-white"><Barcode size={22} /></div>
+            <div className="min-w-0 flex-1"><h2 className="font-black">Scan barcode box implant</h2><p className="text-xs text-slate-500">Kamera hanya aktif ketika modal scanner dibuka.</p></div>
+          </div>
+          <button type="button" onClick={() => setScannerOpen(true)} className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-black text-white shadow-sm hover:bg-blue-700"><Camera size={19} /> Buka Kamera Scanner</button>
         </section>
 
         <div className="space-y-4">
           <section className="rounded-2xl border bg-white p-3 shadow-sm sm:p-4">
             <label className="text-xs font-bold text-slate-600">Pencarian manual</label>
-            <div className="mt-2 flex items-center gap-2 rounded-xl border px-3"><Search size={18} className="text-slate-400" /><input value={query} onChange={(event) => { setQuery(event.target.value); setTeachMode(Boolean(rawCode)); }} className="h-12 min-w-0 flex-1 outline-none" placeholder="Nama, REF, LOT, brand..." /></div>
+            <div className="mt-2 flex items-center gap-2 rounded-xl border px-3 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100"><Search size={18} className="shrink-0 text-slate-400" /><input value={query} onChange={(event) => editSearch(event.target.value)} className="h-12 min-w-0 flex-1 bg-transparent outline-none" placeholder="Nama, REF, LOT, brand..." aria-label="Cari dan ubah hasil scan" />{query ? <button type="button" onClick={() => editSearch("")} className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Hapus pencarian"><X size={17} /></button> : null}</div>
             {resolving || loading ? <div className="flex items-center gap-2 py-6 text-sm text-slate-500"><LoaderCircle className="animate-spin" size={18} /> Memeriksa database...</div> : null}
 
-            {!selected && results.length > 0 && <div className="mt-3 max-h-80 space-y-2 overflow-auto">{results.map((row) => <button key={`${row.No}-${row.NoStok}-${row.Batch}`} onClick={() => setSelected(row)} className="w-full rounded-xl border p-3 text-left hover:border-blue-400 hover:bg-blue-50"><p className="line-clamp-2 text-sm font-bold">{row.Deskripsi}</p><p className="mt-1 text-xs text-slate-500">REF {row.NoStok} · LOT {row.Batch} · Stok {row.TotalQty}</p></button>)}</div>}
+            {!selected && results.length > 0 && <div className="mt-3 max-h-80 space-y-2 overflow-auto">{results.map((row) => <button key={`${row.No}-${row.NoStok}-${row.Batch}`} onClick={() => { setSelected(row); setQuery(`${row.NoStok} ${row.Batch}`); }} className="w-full rounded-xl border p-3 text-left hover:border-blue-400 hover:bg-blue-50"><p className="line-clamp-2 text-sm font-bold">{row.Deskripsi}</p><p className="mt-1 text-xs text-slate-500">REF {row.NoStok} · LOT {row.Batch} · Stok {row.TotalQty}</p></button>)}</div>}
           </section>
 
           {selected && <section className="overflow-hidden rounded-2xl border border-blue-200 bg-white shadow-sm">
@@ -196,6 +238,20 @@ export default function UniversalScannerPage() {
           {qrDataUrl && selected && <section className="rounded-2xl border bg-white p-4 text-center shadow-sm"><p className="font-black">Label QR Internal</p><p className="text-xs text-slate-500">Tempelkan pada box jika barcode pabrik sulit dibaca.</p><Image src={qrDataUrl} width={224} height={224} unoptimized alt={`QR ${selected.NoStok}`} className="mx-auto mt-2 size-56" /><button onClick={printLabel} className="mx-auto mt-2 inline-flex h-11 items-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-bold text-white"><Printer size={17} /> Cetak Label</button></section>}
         </div>
       </div>
+
+      {scannerOpen ? <div className="fixed inset-0 z-[100] flex items-end bg-slate-950/70 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Kamera scanner implant">
+        <button type="button" className="absolute inset-0 cursor-default" onClick={() => setScannerOpen(false)} aria-label="Tutup kamera" />
+        <section className="relative z-10 flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-3xl">
+          <header className="flex items-center gap-3 border-b px-4 py-3">
+            <div className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><Camera size={19} /></div>
+            <div className="min-w-0 flex-1"><h2 className="font-black">Scan Box Implant</h2><p className="text-xs text-slate-500">Posisikan QR atau barcode di tengah kamera</p></div>
+            <button type="button" onClick={() => setScannerOpen(false)} className="grid size-10 place-items-center rounded-xl border text-slate-600 hover:bg-slate-100" aria-label="Tutup kamera"><X size={20} /></button>
+          </header>
+          <div className="overflow-y-auto p-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-4">
+            <Scanner onDetected={(payload) => { setScannerOpen(false); void resolveScan(payload); }} />
+          </div>
+        </section>
+      </div> : null}
 
       <MutateModal open={mutateOpen} row={selected} variants={stock} sheet="Sheet1" onClose={() => setMutateOpen(false)} onSuccess={() => { setMutateOpen(false); void loadStock(); }} />
     </main>

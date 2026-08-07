@@ -14,6 +14,7 @@ interface ScannerProps {
     ref: string;
     lot: string;
     exp?: string;
+    gtin?: string;
     raw?: string;
     searchField?: "REF" | "LOT";
   }) => void;
@@ -116,6 +117,8 @@ function buildImageCandidates(img: HTMLImageElement, originalUrl: string) {
     mode: ImageMode;
   }> = [
     { rect: { x: 0, y: 0, w: 1, h: 1 }, mode: "none" },
+    { rect: { x: 0.12, y: 0.30, w: 0.48, h: 0.48 }, mode: "none" },
+    { rect: { x: 0.12, y: 0.30, w: 0.48, h: 0.48 }, mode: "contrast" },
     { rect: { x: 0.02, y: 0.30, w: 0.96, h: 0.45 }, mode: "none" },
     { rect: { x: 0.02, y: 0.37, w: 0.96, h: 0.30 }, mode: "contrast" },
     { rect: { x: 0.02, y: 0.42, w: 0.96, h: 0.22 }, mode: "threshold" },
@@ -229,13 +232,16 @@ export default function Scanner({ onDetected }: ScannerProps) {
       const parsed = parseGS1(clean);
       const fallbackRef = extractRefFromRaw(clean) || clean;
       const lotFromRaw = extractLotFromRaw(clean);
+      const gs1Lot = parsed.lot ?? lotFromRaw ?? "";
 
       void playBeep();
       onDetected({
-        ref: parsed.gtin ? convertGTINtoREF(parsed.gtin) : fallbackRef,
-        lot: parsed.lot ?? lotFromRaw ?? "",
+        ref: parsed.gtin ? "" : fallbackRef,
+        lot: gs1Lot,
         exp: parsed.exp ?? "",
+        gtin: parsed.gtin,
         raw: clean,
+        searchField: parsed.gtin && gs1Lot ? "LOT" : undefined,
       });
     },
     [onDetected, playBeep]
@@ -333,8 +339,8 @@ export default function Scanner({ onDetected }: ScannerProps) {
       }
 
       if (!decodedText) {
-        // fallback all-format: cukup 2 kandidat awal supaya tetap cepat
-        for (const candidate of candidates.slice(0, 2)) {
+        // QR GS1 sering kecil dan dikelilingi teks; coba crop khusus QR.
+        for (const candidate of candidates.slice(0, 5)) {
           decodedText = await tryDecodeImageUrl(candidate, false);
           if (decodedText) break;
         }
@@ -548,16 +554,6 @@ export default function Scanner({ onDetected }: ScannerProps) {
 }
 
 /* ================= UTIL ================= */
-
-function convertGTINtoREF(gtin: string): string {
-  if (gtin.length === 14) {
-    return `${gtin.substring(2, 6)}-${gtin.substring(6, 9)}-${gtin.substring(
-      9,
-      11
-    )}-${gtin.substring(11, 14)}`;
-  }
-  return gtin;
-}
 
 function extractRefFromRaw(raw: string): string {
   const cleaned = raw.replace(/\u001D/g, "").replace(/\*/g, "").trim();
