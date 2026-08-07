@@ -20,8 +20,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Stock Opname - Lambang",
-  description: "Stock Opname Bali",
+  title: "NEX Stock Implant",
+  description: "Stock, scanner, serah terima, dan logistik implant.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "NEX Stock",
+  },
 };
 
 export const viewport: Viewport = {

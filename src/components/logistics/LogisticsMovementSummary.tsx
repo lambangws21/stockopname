@@ -305,9 +305,17 @@ function SupportSummary({ movements }: { movements: MovementEntry[] }) {
               )}
             </span>
             <div className="min-w-0">
-              <p className="text-xs font-black">
-                {item.row?.NoStok || `Baris #${item.key}`}
+              <p className="line-clamp-2 text-xs font-black">
+                {item.row?.Deskripsi || "Implant support"}
               </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[8px] font-black dark:bg-zinc-800">
+                  REF {item.row?.NoStok || "-"}
+                </span>
+                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[8px] font-black text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                  LOT {item.row?.Batch || "-"}
+                </span>
+              </div>
               <p className="mt-0.5 text-[10px] font-semibold text-zinc-500">
                 {item.reason === "MOBILISASI_KELUAR"
                   ? "Support keluar"
@@ -449,7 +457,7 @@ function buildRefillRequestMessage(items: UsedSummary[], days: number) {
   ];
   items.forEach((item, index) => {
     lines.push(
-      `${index + 1}. ${item.row?.Brand || "-"} • ${item.row?.NoStok || item.key} • refill ${item.suggestedRefill} pcs`
+      `${index + 1}. ${item.row?.Brand || "-"} • REF ${item.row?.NoStok || item.key} • LOT ${item.row?.Batch || "-"} • refill ${item.suggestedRefill} pcs`
     );
   });
   lines.push("", "Mohon diproses.");

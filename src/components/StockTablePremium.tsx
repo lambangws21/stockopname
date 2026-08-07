@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -42,6 +43,8 @@ import {
   Warehouse,
   StickyNote,
   UploadCloud,
+  MoreHorizontal,
+  AlertTriangle,
   X,
 } from "lucide-react";
 
@@ -74,7 +77,7 @@ import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 type FilterMode = "ALL" | "REF" | "LOT" | "NAMA";
 type BrandFilter = "NORMMED" | "ZIMMER";
 type ImplantFilter = StockImplantCategory;
-type StockStatusFilter = "ALL" | "LOW" | "OUT";
+type StockStatusFilter = "ALL" | "LOW" | "OUT" | "SAFE";
 type ExternalScanPayload = {
   ref: string;
   lot?: string;
@@ -131,12 +134,29 @@ function toSafeNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function stockProductIdentity(row: StockRow) {
+  return [row.Brand, row.Implant, row.Deskripsi]
+    .map((value) =>
+      String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, " ")
+    )
+    .join("|");
+}
+
 function latestDescription(value: unknown) {
   const lines = String(value ?? "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.at(-1) || "";
+  const latest = lines.at(-1) || "";
+  return /serah terima\s+ST-|dokumen\s*:\s*ST-/i.test(latest)
+    ? latest.replace(
+        /Support keluar(?: ke cabang)?/i,
+        "Dikirim untuk tindakan operasi"
+      )
+    : latest;
 }
 
 function subscribeMobileViewport(onChange: () => void) {
@@ -230,6 +250,16 @@ export default function StockTablePremium({
   const [lowStockThreshold, setLowStockThreshold] = useState(1);
   const [opnameOpen, setOpnameOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const lastQuickScanRef = useRef("");
+
+  useEffect(() => {
+    const updateScrollTopVisibility = () => setShowScrollTop(window.scrollY > 560);
+    updateScrollTopVisibility();
+    window.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
+    return () => window.removeEventListener("scroll", updateScrollTopVisibility);
+  }, []);
 
   useEffect(() => {
     if (opnameRequest > 0) setOpnameOpen(true);
@@ -297,7 +327,10 @@ export default function StockTablePremium({
         (stockStatusFilter === "LOW" &&
           !isDiscontinuedStock(r) && !isSupportCenterStock(r) &&
           stockQty > 0 &&
-          stockQty <= lowStockThreshold);
+          stockQty <= lowStockThreshold) ||
+        (stockStatusFilter === "SAFE" &&
+          !isDiscontinuedStock(r) && !isSupportCenterStock(r) &&
+          stockQty > lowStockThreshold);
 
       if (!matchesBrand || !matchesImplant || !matchesStockStatus) return false;
       if (!q) return true;
@@ -324,14 +357,67 @@ export default function StockTablePremium({
     lowStockThreshold,
   ]);
 
-  const tableData = useStockTable(filteredData);
+  const groupedDisplayData = useMemo(() => {
+    const groups = new Map<string, StockRow[]>();
+    filteredData.forEach((row) => {
+      const key = [
+        stockProductIdentity(row),
+        isSupportCenterStock(row) ? "SUPPORT PUSAT" : "OFFICE",
+        isDiscontinuedStock(row) ? "DISCONTINUE" : "ACTIVE",
+      ].join("|");
+      const current = groups.get(key) || [];
+      current.push(row);
+      groups.set(key, current);
+    });
+    const collator = new Intl.Collator("id-ID", { numeric: true, sensitivity: "base" });
+    return Array.from(groups.values()).map((rows) => {
+      const variants = [...rows].sort(
+        (first, second) =>
+          collator.compare(String(first.NoStok || ""), String(second.NoStok || "")) ||
+          collator.compare(String(first.Batch || ""), String(second.Batch || "")) ||
+          Number(first.No || 0) - Number(second.No || 0)
+      );
+      const representative = variants[0];
+      return {
+        ...representative,
+        Qty: variants.reduce((total, item) => total + toSafeNumber(item.Qty), 0),
+        TotalQty: variants.reduce((total, item) => total + toSafeNumber(item.TotalQty), 0),
+        TERPAKAI: variants.reduce((total, item) => total + toSafeNumber(item.TERPAKAI), 0),
+        REFILL: variants.reduce((total, item) => total + toSafeNumber(item.REFILL), 0),
+        KET: variants.map((item) => latestDescription(item.KET)).filter(Boolean).at(-1) || "",
+        Variants: variants,
+        VariantCount: variants.length,
+      } satisfies StockRow;
+    });
+  }, [filteredData]);
+
+  useEffect(() => {
+    if (!scannedValue || data.length === 0) return;
+    const normalizedRef = scannedRef.toUpperCase();
+    const normalizedLot = scannedLot.toUpperCase();
+    const signature = `${normalizedRef}::${normalizedLot}`;
+    if (lastQuickScanRef.current === signature) return;
+    const match = data.find((row) => {
+      const sameRef = !normalizedRef || String(row.NoStok || "").trim().toUpperCase() === normalizedRef;
+      const sameLot = !normalizedLot || String(row.Batch || "").trim().toUpperCase() === normalizedLot;
+      return sameRef && sameLot;
+    });
+    if (!match) return;
+    lastQuickScanRef.current = signature;
+    setMovementRow(match);
+    setMovementOpen(true);
+    toast.success("Implant ditemukan. Pilih aksi yang ingin dilakukan.");
+  }, [data, scannedLot, scannedRef, scannedValue]);
+
+  const tableData = useStockTable(groupedDisplayData);
   const setTablePage = tableData.setPage;
 
   /* ================= SUMMARY (FILTERED) ================= */
   const summary = useMemo(() => {
-    return filteredData.reduce(
+    const productKeys = new Set<string>();
+    const totals = filteredData.reduce(
       (acc, r) => {
-        acc.count += 1;
+        productKeys.add(stockProductIdentity(r));
         acc.qty += isSupportCenterStock(r) ? 0 : toSafeNumber(r.TotalQty);
         acc.used += toSafeNumber(r.TERPAKAI);
         acc.refill += toSafeNumber(r.REFILL);
@@ -339,6 +425,8 @@ export default function StockTablePremium({
       },
       { count: 0, qty: 0, used: 0, refill: 0 }
     );
+    totals.count = productKeys.size;
+    return totals;
   }, [filteredData]);
 
   const brandSummary = useMemo(() => {
@@ -347,10 +435,11 @@ export default function StockTablePremium({
       ZIMMER: { count: 0, available: 0, used: 0, refill: 0 },
     };
 
-    return data.reduce((acc, row) => {
+    const productKeys = { NORMMED: new Set<string>(), ZIMMER: new Set<string>() };
+    const totals = data.reduce((acc, row) => {
       const brand = String(row.Brand ?? "").trim().toUpperCase();
       if (brand !== "NORMMED" && brand !== "ZIMMER") return acc;
-      acc[brand].count += 1;
+      productKeys[brand].add(stockProductIdentity(row));
       acc[brand].available += isSupportCenterStock(row)
         ? 0
         : toSafeNumber(row.TotalQty);
@@ -358,7 +447,14 @@ export default function StockTablePremium({
       acc[brand].refill += toSafeNumber(row.REFILL);
       return acc;
     }, initial);
+    totals.NORMMED.count = productKeys.NORMMED.size;
+    totals.ZIMMER.count = productKeys.ZIMMER.size;
+    return totals;
   }, [data]);
+  const allProductCount = useMemo(
+    () => new Set(data.map(stockProductIdentity)).size,
+    [data]
+  );
 
   useEffect(() => {
     let active = true;
@@ -679,11 +775,11 @@ export default function StockTablePremium({
         </div>
       </div>
 
-      <div className="space-y-4 bg-[#f8fafc] p-3 pb-24 dark:bg-zinc-950 sm:bg-transparent sm:p-5 sm:pb-5 dark:sm:bg-transparent">
+      <div className="space-y-4 bg-[#f8fafc] p-3 pb-32 dark:bg-zinc-950 sm:bg-transparent sm:p-5 sm:pb-5 dark:sm:bg-transparent">
       <section className="flex items-center gap-2 rounded-xl border bg-white p-2 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:hidden">
         <div className="min-w-0 flex-1 pl-1">
           <h2 className="truncate text-xs font-black">Daftar Stock Implant</h2>
-          <p className="mt-0.5 text-[9px] text-zinc-500">{data.length} data tersedia</p>
+          <p className="mt-0.5 text-[9px] text-zinc-500">{allProductCount} jenis · {data.length} varian REF/LOT</p>
         </div>
         {onOpenScanner && (
           <button
@@ -696,19 +792,6 @@ export default function StockTablePremium({
         )}
         <button
           type="button"
-          onClick={reload}
-          className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-bold text-zinc-600 dark:text-zinc-300"
-        >
-          <RefreshCcw size={14} className={loading ? "animate-spin" : ""} /> Refresh
-        </button>
-        <Link
-          href="/upload-stock"
-          className="inline-flex h-10 items-center gap-1.5 rounded-lg border px-2.5 text-[9px] font-bold text-zinc-600 dark:text-zinc-300"
-        >
-          <UploadCloud size={14} /> Import
-        </Link>
-        <button
-          type="button"
           onClick={() => {
             setIsCreate(true);
             setSelectedRow(null);
@@ -718,10 +801,34 @@ export default function StockTablePremium({
         >
           <Plus size={14} /> Tambah
         </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMobileActionsOpen((value) => !value)}
+            className="inline-flex size-10 items-center justify-center rounded-lg border text-zinc-600 dark:text-zinc-300"
+            aria-label="Aksi lainnya"
+            aria-expanded={mobileActionsOpen}
+          >
+            <MoreHorizontal size={17} />
+          </button>
+          {mobileActionsOpen && (
+            <div className="absolute right-0 top-[calc(100%+0.45rem)] z-40 w-44 overflow-hidden rounded-xl border bg-white p-1.5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+              <button type="button" onClick={() => { reload(); setMobileActionsOpen(false); }} className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-bold hover:bg-slate-100 dark:hover:bg-zinc-800">
+                <RefreshCcw size={14} className={loading ? "animate-spin" : ""} /> Muat ulang data
+              </button>
+              <Link href="/upload-stock" onClick={() => setMobileActionsOpen(false)} className="flex h-10 items-center gap-2 rounded-lg px-3 text-[10px] font-bold hover:bg-slate-100 dark:hover:bg-zinc-800">
+                <UploadCloud size={14} /> Import Excel
+              </Link>
+              <button type="button" onClick={() => { setOpnameOpen(true); setMobileActionsOpen(false); }} className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-[10px] font-bold hover:bg-slate-100 dark:hover:bg-zinc-800">
+                <ClipboardCheck size={14} /> Stock opname
+              </button>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* COMPACT BRAND SELECTOR */}
-      <div className="grid grid-cols-3 gap-1 rounded-lg border bg-white p-1 shadow-sm dark:bg-zinc-900 sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
+      <div className="hidden sm:static sm:flex sm:gap-2 sm:overflow-x-auto sm:border-0 sm:bg-transparent sm:p-0 sm:pb-1 sm:shadow-none dark:sm:bg-transparent">
         <button
           type="button"
           onClick={() => setBrandFilters([])}
@@ -732,7 +839,7 @@ export default function StockTablePremium({
           }`}
         >
           <div className="text-[11px] font-bold sm:text-xs">Semua Brand</div>
-          <div className="mt-0.5 text-[10px] opacity-70">{data.length}</div>
+          {loading ? <span className="mx-auto mt-1 block h-3 w-10 animate-pulse rounded bg-slate-300 dark:bg-zinc-700 sm:mx-0" /> : <div className="mt-0.5 text-[10px] opacity-70">{allProductCount} jenis</div>}
         </button>
         {(["NORMMED", "ZIMMER"] as const).map((brand) => {
           const stats = brandSummary[brand];
@@ -755,15 +862,17 @@ export default function StockTablePremium({
                 <div className="text-[11px] font-bold sm:text-xs">
                   {brand === "NORMMED" ? "Normmed" : "Zimmer"}
                 </div>
-                <div className={`text-sm font-black sm:text-lg ${
-                  normmed ? "text-emerald-600" : "text-blue-600"
-                }`}>
-                  {stats.available}
-                </div>
+                {loading ? (
+                  <span className="h-5 w-9 animate-pulse rounded bg-slate-200 dark:bg-zinc-700" />
+                ) : (
+                  <div className={`text-sm font-black sm:text-lg ${normmed ? "text-emerald-600" : "text-blue-600"}`}>
+                    {stats.count}
+                  </div>
+                )}
               </div>
               <div className="mt-0.5 hidden justify-between text-[10px] text-zinc-500 sm:flex">
-                <span>{stats.count} data</span>
-                <span>stok tersedia</span>
+                <span>{stats.count} jenis</span>
+                <span>{stats.available} pcs tersedia</span>
               </div>
             </button>
           );
@@ -771,7 +880,7 @@ export default function StockTablePremium({
       </div>
 
       {/* FILTERS */}
-      <div className={`sticky top-0 rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:static sm:bg-zinc-50 sm:p-3 sm:shadow-none dark:sm:bg-zinc-800/50 ${
+      <div className={`sticky top-[4.35rem] rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:static sm:bg-zinc-50 sm:p-3 sm:shadow-none dark:sm:bg-zinc-800/50 ${
         mobileFiltersOpen ? "z-60" : "z-30"
       }`}>
         <div className="mb-2 hidden flex-wrap items-center justify-between gap-2 px-0.5 sm:flex">
@@ -797,7 +906,7 @@ export default function StockTablePremium({
           </button>
         </div>
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-[minmax(280px,1fr)_150px_190px_130px_auto]">
-        <div className="grid grid-cols-[minmax(0,1fr)_100px] gap-2 sm:block">
+        <div className="grid grid-cols-[minmax(0,1fr)_48px] gap-2 sm:block">
           <label className="relative block">
             <Search size={16} className="pointer-events-none absolute left-3 top-3.5 text-zinc-400" />
             <input
@@ -827,8 +936,8 @@ export default function StockTablePremium({
             }`}
             aria-expanded={mobileFiltersOpen}
           >
-            <SlidersHorizontal size={14} />
-            Filter
+            <SlidersHorizontal size={17} />
+            <span className="sr-only">Filter</span>
             {activeFilterCount > 0 && (
               <span className="flex min-w-4 items-center justify-center rounded bg-white/20 px-1 text-[9px]">
                 {activeFilterCount}
@@ -970,6 +1079,7 @@ export default function StockTablePremium({
             ["ALL", "Semua"],
             ["LOW", "Menipis"],
             ["OUT", "Habis"],
+            ["SAFE", "Aman"],
           ] as const).map(([value, label]) => (
             <button
               type="button"
@@ -981,6 +1091,8 @@ export default function StockTablePremium({
                     ? "border-red-600 bg-red-600 text-white"
                     : value === "LOW"
                     ? "border-amber-500 bg-amber-500 text-white"
+                    : value === "SAFE"
+                    ? "border-emerald-600 bg-emerald-600 text-white"
                     : "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-zinc-900"
                   : "bg-white text-zinc-500 dark:bg-zinc-900"
               }`}
@@ -1032,12 +1144,41 @@ export default function StockTablePremium({
               <FilterChip key={value} label={STOCK_IMPLANT_CATEGORY_LABELS[value]} onRemove={() => setImplantFilters(implantFilters.filter((item) => item !== value))} />
             ))}
             {stockStatusFilter !== "ALL" && (
-              <FilterChip label={stockStatusFilter === "LOW" ? "Stok menipis" : "Stok habis"} onRemove={() => setStockStatusFilter("ALL")} />
+              <FilterChip label={stockStatusFilter === "LOW" ? "Stok menipis" : stockStatusFilter === "OUT" ? "Stok habis" : "Stok aman"} onRemove={() => setStockStatusFilter("ALL")} />
             )}
             {mode !== "ALL" && <FilterChip label={`Cari: ${mode}`} onRemove={() => setMode("ALL")} />}
             <button type="button" onClick={() => { setBrandFilters([]); setImplantFilters([]); setStockStatusFilter("ALL"); setMode("ALL"); }} className="shrink-0 px-2 py-1 text-[9px] font-black text-blue-600">Reset</button>
           </div>
         )}
+      </div>
+
+      <div className="flex items-center gap-2 sm:hidden">
+        <div className="grid min-w-0 flex-1 grid-cols-3 rounded-xl border bg-white p-1 shadow-sm dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setBrandFilters([])}
+            className={`h-9 min-w-0 rounded-lg px-1 text-[9px] font-black ${brandFilters.length === 0 ? "bg-slate-900 text-white" : "text-zinc-500"}`}
+          >
+            Semua
+          </button>
+          {(["NORMMED", "ZIMMER"] as const).map((brand) => {
+            const active = brandFilters.includes(brand);
+            return (
+              <button
+                type="button"
+                key={`mobile-brand-${brand}`}
+                onClick={() => setBrandFilters(active ? [] : [brand])}
+                className={`h-9 min-w-0 truncate rounded-lg px-1 text-[9px] font-black ${active ? brand === "NORMMED" ? "bg-emerald-600 text-white" : "bg-violet-600 text-white" : "text-zinc-500"}`}
+              >
+                {brand === "NORMMED" ? "Normmed" : "Zimmer"}
+              </button>
+            );
+          })}
+        </div>
+        <div className="grid h-11 shrink-0 grid-cols-2 rounded-xl border bg-white p-1 dark:bg-zinc-900">
+          <button type="button" onClick={() => setViewModePreference("card")} className={`flex size-8 items-center justify-center rounded-lg ${viewMode === "card" ? "bg-slate-900 text-white" : "text-zinc-500"}`} aria-label="Card view"><LayoutGrid size={14} /></button>
+          <button type="button" onClick={() => setViewModePreference("table")} className={`flex size-8 items-center justify-center rounded-lg ${viewMode === "table" ? "bg-slate-900 text-white" : "text-zinc-500"}`} aria-label="Table view"><Table2 size={14} /></button>
+        </div>
       </div>
       <QuickSearch
         data={data}
@@ -1052,7 +1193,7 @@ export default function StockTablePremium({
 
       {/* SUMMARY */}
       <div className="hidden grid-cols-2 gap-px overflow-hidden rounded-lg border bg-slate-200 dark:bg-zinc-700 sm:grid sm:grid-cols-4 sm:rounded-xl">
-        <SimpleMetric label="Data" value={summary.count} tone="text-zinc-900 dark:text-white" />
+        <SimpleMetric label="Jenis" value={summary.count} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Stok" value={summary.qty} tone="text-zinc-900 dark:text-white" />
         <SimpleMetric label="Terpakai" value={summary.used} tone="text-red-600" />
         <SimpleMetric label="Refill" value={summary.refill} tone="text-blue-600" />
@@ -1118,25 +1259,25 @@ export default function StockTablePremium({
       >
         <div className="relative overflow-hidden rounded-xl border bg-white dark:bg-zinc-900 shadow-sm">
           <div className="overflow-x-auto">
-            <table className="min-w-[1200px] w-full text-sm">
+            <table className="min-w-[760px] w-full text-sm sm:min-w-[1200px]">
               {/* ================= HEADER ================= */}
               <thead className="sticky top-0 z-10 bg-zinc-50 dark:bg-zinc-800 border-b">
                 <tr className="text-xs uppercase tracking-wide text-zinc-500">
                   {[
-                    "REF",
-                    "Deskripsi",
-                    "Implant",
-                    "Brand",
-                    "Batch",
-                    "Qty",
-                    "Total",
-                    "Terpakai",
-                    "Refill",
-                    "Notes",
-                  ].map((h) => (
+                    ["REF", ""],
+                    ["Nama Produk", ""],
+                    ["Implant", "hidden sm:table-cell"],
+                    ["Brand", "hidden sm:table-cell"],
+                    ["LOT", ""],
+                    ["Qty", "hidden sm:table-cell"],
+                    ["Office / Status", ""],
+                    ["Terpakai", "hidden sm:table-cell"],
+                    ["Refill", "hidden sm:table-cell"],
+                    ["Notes", "hidden sm:table-cell"],
+                  ].map(([h, responsiveClass]) => (
                     <th
                       key={h}
-                      className="px-3 py-2 text-left font-semibold whitespace-nowrap"
+                      className={`px-3 py-2 text-left font-semibold whitespace-nowrap ${h === "REF" ? "sticky left-0 z-20 bg-zinc-50 dark:bg-zinc-800" : ""} ${responsiveClass}`}
                     >
                       {h}
                     </th>
@@ -1181,20 +1322,27 @@ export default function StockTablePremium({
                       }`}
                     >
                       {/* REF */}
-                      <td className="px-3 py-2 text-zinc-600">
-                        {highlight(r.NoStok)}
+                      <td className="sticky left-0 z-10 bg-white px-3 py-2 text-zinc-600 dark:bg-zinc-900">
+                        <div className="flex max-w-44 flex-wrap gap-1">
+                          {(r.Variants || [r]).map((variant) => (
+                            <span key={`${variant.No}-${variant.NoStok}-${variant.Batch}`} className="rounded-md bg-blue-50 px-1.5 py-1 text-[8px] font-bold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                              {variant.NoStok || "-"}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       {/* Deskripsi */}
-                      <td className="px-3 py-2 max-w-[260px] truncate">
-                        {highlight(r.Deskripsi)}
+                      <td className="max-w-[260px] px-3 py-2">
+                        <span className="line-clamp-2">{highlight(r.Deskripsi)}</span>
+                        {(r.VariantCount || 1) > 1 && <span className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[8px] font-black text-slate-600 dark:bg-zinc-800 dark:text-zinc-300">{r.VariantCount} REF / LOT</span>}
                       </td>
 
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         <Badge variant="outline">{r.Implant || "-"}</Badge>
                       </td>
 
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         <div className="flex flex-col items-start gap-1">
                           <Badge variant="secondary">{r.Brand || "-"}</Badge>
                           <span className={`rounded-md px-1.5 py-0.5 text-[8px] font-black ${
@@ -1209,37 +1357,44 @@ export default function StockTablePremium({
 
                       {/* Batch */}
                       <td className="px-3 py-2 text-zinc-500">
-                        {highlight(r.Batch)}
+                        <div className="flex max-w-44 flex-wrap gap-1">
+                          {(r.Variants || [r]).map((variant) => (
+                            <span key={`${variant.No}-${variant.Batch}`} className={`rounded-md px-1.5 py-1 text-[8px] font-bold ${variant.Batch ? "bg-slate-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"}`}>
+                              {variant.Batch || "⚠ LOT belum diinput"}
+                            </span>
+                          ))}
+                        </div>
                       </td>
 
                       {/* Qty */}
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         <Badge variant="default">{r.Qty}</Badge>
                       </td>
 
                       {/* Total */}
                       <td className="px-3 py-2">
-                        <Badge
-                          variant={r.TotalQty <= 0 ? "outline" : "destructive"}
-                        >
-                          {r.TotalQty}
-                        </Badge>
+                        <div className="flex flex-col items-start gap-1">
+                          <b className={r.TotalQty <= 0 ? "text-red-600" : "text-emerald-700"}>{r.TotalQty} pcs</b>
+                          <span className={`rounded px-1.5 py-0.5 text-[7px] font-black ${r.TotalQty <= 0 ? "bg-red-600 text-white" : r.TotalQty <= lowStockThreshold ? "bg-amber-500 text-white" : "bg-emerald-100 text-emerald-700"}`}>
+                            {r.TotalQty <= 0 ? "HABIS" : r.TotalQty <= lowStockThreshold ? "MENIPIS" : "AMAN"}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Terpakai */}
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         <Badge className="animate-warning text-slate-800">
                           {r.TERPAKAI}
                         </Badge>
                       </td>
 
                       {/* Refill */}
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         <Badge variant="secondary">{r.REFILL}</Badge>
                       </td>
 
                       {/* Notes */}
-                      <td className="px-3 py-2">
+                      <td className="hidden px-3 py-2 sm:table-cell">
                         {latestDescription(r.KET) ? (
                           <button
                             type="button"
@@ -1256,7 +1411,7 @@ export default function StockTablePremium({
                         <div className="inline-flex items-center gap-1">
                           <button
                             onClick={() => {
-                              setHistoryNo(r.No);
+                              setHistoryNo((r.Variants || [r])[0].No);
                               setHistoryOpen(true);
                             }}
                             className="
@@ -1271,7 +1426,8 @@ export default function StockTablePremium({
                           </button>
 
                           <RowActions
-                            row={r}
+                            row={(r.Variants || [r])[0]}
+                            stockRows={data}
                             sheet={sheet}
                             context={context}
                             onReload={reload}
@@ -1293,16 +1449,6 @@ export default function StockTablePremium({
       </motion.div>
 
       {/* ================= CARD VIEW ================= */}
-      {viewMode === "card" && (
-        <div id="stock-list" className="flex scroll-mt-4 items-center justify-between sm:hidden">
-          <h3 className="text-sm font-black tracking-tight">
-            Daftar Stock Implant
-          </h3>
-          <span className="text-[10px] font-semibold text-blue-600">
-            View: Card
-          </span>
-        </div>
-      )}
       <motion.div
         key={`card-view-${viewMode}`}
         initial={viewMode === "card" ? { opacity: 0, y: 10 } : false}
@@ -1349,8 +1495,8 @@ export default function StockTablePremium({
                 : "bg-zinc-500"
             }`} />
             <div className="p-3.5 sm:p-4">
-              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className={`inline-flex h-7 shrink-0 items-center rounded-lg px-2.5 text-[9px] font-black uppercase tracking-wide ${
+              <div className="flex min-w-0 items-center justify-end gap-1.5 sm:flex-wrap sm:justify-start">
+                  <span className={`hidden h-7 shrink-0 items-center rounded-lg px-2.5 text-[9px] font-black uppercase tracking-wide sm:inline-flex ${
                     r.Brand === "NORMMED"
                       ? "bg-emerald-600 text-white"
                       : r.Brand === "ZIMMER"
@@ -1359,16 +1505,16 @@ export default function StockTablePremium({
                   }`}>
                     {r.Brand || "Tanpa brand"}
                   </span>
-                  <span className="inline-flex h-7 min-w-0 max-w-[52%] items-center truncate rounded-lg bg-slate-200 px-2.5 text-[9px] font-black uppercase text-slate-800 dark:bg-zinc-700 dark:text-zinc-100">
+                  <span className="hidden h-7 min-w-0 max-w-[52%] items-center truncate rounded-lg bg-slate-200 px-2.5 text-[9px] font-black uppercase text-slate-800 dark:bg-zinc-700 dark:text-zinc-100 sm:inline-flex">
                     {r.Implant || "Tanpa kategori"}
                   </span>
-                  <span className={`order-4 ml-auto inline-flex h-7 shrink-0 items-center rounded-lg border px-2.5 text-center text-[9px] font-black uppercase ${
+                  <span className={`ml-auto inline-flex h-7 shrink-0 items-center rounded-lg border px-2.5 text-center text-[9px] font-black uppercase sm:order-4 ${
                     isSupportCenterStock(r)
                       ? "border-violet-600 bg-violet-600 text-white"
                       : isDiscontinuedStock(r)
                       ? "border-zinc-500 bg-zinc-600 text-white"
                       : r.TotalQty <= 0
-                      ? "border-red-700 bg-red-600 text-white"
+                      ? "animate-pulse border-red-700 bg-red-600 text-white shadow-sm shadow-red-300"
                       : r.TotalQty <= lowStockThreshold
                       ? "border-amber-600 bg-amber-500 text-white"
                       : "border-emerald-700 bg-emerald-600 text-white"
@@ -1387,7 +1533,7 @@ export default function StockTablePremium({
                     <button
                       type="button"
                       onClick={() => setNoteRow(r)}
-                      className="order-3 inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[9px] font-black uppercase text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                      className="order-3 hidden h-7 shrink-0 items-center gap-1 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[9px] font-black uppercase text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300 sm:inline-flex"
                     >
                       <StickyNote size={11} /> Notes
                     </button>
@@ -1396,32 +1542,75 @@ export default function StockTablePremium({
               <div className="mt-2 line-clamp-2 min-h-10 text-sm font-black uppercase leading-5 tracking-[0.01em]">
                 {highlight(r.Deskripsi)}
               </div>
+              <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[9px] font-bold text-zinc-500 sm:hidden">
+                <span className="truncate">{r.Brand || "Tanpa brand"} • {r.Implant || "Tanpa kategori"}</span>
+                {latestDescription(r.KET) && (
+                  <button type="button" onClick={() => setNoteRow(r)} className="ml-auto inline-flex shrink-0 items-center gap-1 text-blue-600">
+                    <StickyNote size={11} /> Notes
+                  </button>
+                )}
+              </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-1.5">
-              <div className={`rounded-lg px-2 py-2.5 ${isSupportCenterStock(r) ? "bg-violet-100 dark:bg-violet-950/40" : "bg-emerald-50 dark:bg-emerald-950/25"}`}>
-                <div className={`text-[8px] font-bold uppercase ${isSupportCenterStock(r) ? "text-violet-600" : "text-emerald-600"}`}>{isSupportCenterStock(r) ? "Stok Pusat" : "Stok Office"}</div>
-                <div className={`mt-1 text-base font-black ${
+              {(r.VariantCount || 1) > 1 ? (
+                <details className="group mt-2 overflow-hidden rounded-xl border bg-slate-50 dark:border-zinc-700 dark:bg-zinc-800/60">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-2.5">
+                    <span className="text-[9px] font-black uppercase tracking-wide text-zinc-500">{r.VariantCount} varian REF / LOT</span>
+                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-blue-600">Lihat <ChevronDown size={13} className="transition group-open:rotate-180" /></span>
+                  </summary>
+                  <div className="flex gap-1.5 overflow-x-auto border-t p-2">
+                    {(r.Variants || [r]).map((variant) => (
+                      <div key={`${variant.No}-${variant.NoStok}-${variant.Batch}`} className="min-w-fit rounded-lg border bg-white px-2 py-1.5 dark:bg-zinc-900">
+                        <p className="text-[8px] font-black text-blue-700 dark:text-blue-300">REF {variant.NoStok || "Belum diinput"}</p>
+                        {variant.Batch ? (
+                          <p className="mt-0.5 text-[8px] font-bold text-zinc-600 dark:text-zinc-300">LOT {variant.Batch}</p>
+                        ) : (
+                          <p className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[8px] font-black text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                            <AlertTriangle size={9} /> LOT belum diinput
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border bg-slate-50 px-2.5 py-2 text-[9px] dark:border-zinc-700 dark:bg-zinc-800/60">
+                  <b className="text-blue-700 dark:text-blue-300">REF {r.NoStok || "Belum diinput"}</b>
+                  <span className="text-zinc-300">•</span>
+                  {r.Batch ? (
+                    <b className="text-zinc-600 dark:text-zinc-300">LOT {r.Batch}</b>
+                  ) : (
+                    <b className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-1 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                      <AlertTriangle size={10} /> LOT belum diinput
+                    </b>
+                  )}
+                </div>
+              )}
+
+            <div className="mt-2 grid grid-cols-3 divide-x rounded-lg border-y bg-white/60 dark:border-zinc-700 dark:bg-zinc-900/40">
+              <div className="px-2 py-2">
+                <div className={`text-[8px] font-bold uppercase ${isSupportCenterStock(r) ? "text-violet-600" : "text-emerald-600"}`}>{isSupportCenterStock(r) ? "Stok Pusat" : "Office"}</div>
+                <div className={`mt-0.5 text-sm font-black ${
                   isSupportCenterStock(r) ? "text-violet-600" : r.TotalQty <= 0 ? "text-red-600" : "text-zinc-900 dark:text-white"
                 }`}>{r.TotalQty} Pcs</div>
               </div>
-              <div className="rounded-lg bg-red-50 px-2 py-2.5 dark:bg-red-950/25">
-                <div className="text-[8px] font-bold uppercase text-red-500">Terpakai</div>
-                <div className="mt-1 text-base font-black text-red-500">{r.TERPAKAI || 0} Pcs</div>
+              <div className="px-2 py-2">
+                <div className="text-[8px] font-bold uppercase text-zinc-500">Terpakai</div>
+                <div className={`mt-0.5 text-sm font-black ${Number(r.TERPAKAI || 0) > 0 ? "text-red-600" : "text-zinc-500"}`}>{r.TERPAKAI || 0} Pcs</div>
               </div>
-              <div className="rounded-lg bg-amber-50 px-2 py-2.5 dark:bg-amber-950/25">
-                <div className="text-[8px] font-bold uppercase text-amber-600">Refill</div>
-                <div className="mt-1 text-base font-black text-amber-500">{r.REFILL || 0} Pcs</div>
+              <div className="px-2 py-2">
+                <div className="text-[8px] font-bold uppercase text-zinc-500">Refill</div>
+                <div className={`mt-0.5 text-sm font-black ${Number(r.REFILL || 0) > 0 ? "text-amber-600" : "text-zinc-500"}`}>{r.REFILL || 0} Pcs</div>
               </div>
             </div>
 
-            <div className="mt-3 border-t pt-3">
+            <div className="mt-2 border-t pt-2">
               <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => {
-                  setHistoryNo(r.No);
+                  setHistoryNo((r.Variants || [r])[0].No);
                   setHistoryOpen(true);
                 }}
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-100 px-3 text-[11px] font-bold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-100 px-3 text-[10px] font-bold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
                 aria-label="Lihat riwayat implant"
               >
                 <NotebookTabs size={16} />
@@ -1429,7 +1618,8 @@ export default function StockTablePremium({
               </button>
 
               <RowActions
-                row={r}
+                row={(r.Variants || [r])[0]}
+                stockRows={data}
                 sheet={sheet}
                 context={context}
                 showLabel
@@ -1447,7 +1637,7 @@ export default function StockTablePremium({
       </motion.div>
 
       {/* PAGINATION */}
-      <div className="flex items-center justify-center gap-2">
+      <div className="mb-28 flex items-center justify-center gap-2 sm:mb-0">
         <button
           onClick={() => tableData.setPage(Math.max(1, tableData.page - 1))}
           disabled={tableData.page <= 1}
@@ -1475,34 +1665,26 @@ export default function StockTablePremium({
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        className="fixed right-3 z-39 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white/95 text-slate-600 shadow-lg backdrop-blur active:scale-95 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-300 sm:hidden"
-        style={{ bottom: "calc(5.25rem + env(safe-area-inset-bottom))" }}
-        aria-label="Kembali ke atas"
-        title="Kembali ke atas"
-      >
-        <ChevronUp size={18} strokeWidth={2.5} />
-      </button>
+      <AnimatePresence>
+        {showScrollTop && !mobileFiltersOpen && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, scale: 0.8, x: 8 }}
+            animate={{ opacity: 1, scale: 1, x: 0 }}
+            exit={{ opacity: 0, scale: 0.8, x: 8 }}
+            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            className="fixed right-3 z-39 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white/95 text-slate-600 shadow-lg backdrop-blur active:scale-95 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-300 sm:hidden"
+            style={{ bottom: "calc(5.75rem + env(safe-area-inset-bottom))" }}
+            aria-label="Kembali ke atas"
+            title="Kembali ke atas"
+          >
+            <ChevronUp size={18} strokeWidth={2.5} />
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.1)] backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden" aria-label="Navigasi utama Stock Implant">
-        <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
-          <button
-            type="button"
-            onClick={() =>
-              document
-                .getElementById("stock-list")
-                ?.scrollIntoView({ behavior: "smooth", block: "start" })
-            }
-            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl bg-blue-600 px-1 text-[9px] font-black text-white shadow-sm shadow-blue-200 active:scale-[0.97] dark:shadow-none"
-            aria-current="page"
-          >
-            <span className="flex size-6 items-center justify-center rounded-lg bg-white/15">
-              <ClipboardCheck size={16} strokeWidth={2.4} />
-            </span>
-            <span>Stok</span>
-          </button>
+        <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
           <MobileNavLink href="/logistik" label="Logistik" icon={<Warehouse size={17} />} />
           <MobileNavLink href="/serah-terima" label="Serah Terima" icon={<ClipboardSignature size={17} />} />
           <MobileNavLink href="/rumah-sakit" label="Stock RS" icon={<Hospital size={17} />} />
@@ -1557,6 +1739,7 @@ export default function StockTablePremium({
         open={opnameOpen}
         rows={data}
         onClose={() => setOpnameOpen(false)}
+        onSuccess={reload}
       />
 
       <LowStockAlertModal

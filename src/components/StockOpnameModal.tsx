@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ClipboardCheck,
   Download,
+  LoaderCircle,
   Minus,
   Plus,
   ScanLine,
@@ -31,14 +32,19 @@ export default function StockOpnameModal({
   open,
   rows,
   onClose,
+  onSuccess,
 }: {
   open: boolean;
   rows: StockRow[];
   onClose: () => void;
+  onSuccess?: () => void | Promise<void>;
 }) {
   const [physical, setPhysical] = useState<Record<number, number>>({});
   const [query, setQuery] = useState("");
   const [scannerOpen, setScannerOpen] = useState(true);
+  const [note, setNote] = useState("");
+  const [actor, setActor] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const countedRows = useMemo(
     () =>
@@ -136,6 +142,42 @@ export default function StockOpnameModal({
     anchor.download = `stock-opname-${new Date().toISOString().slice(0, 10)}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const saveAdjustment = async () => {
+    const mismatches = countedRows.filter((item) => item.difference !== 0);
+    if (!mismatches.length) return toast.info("Tidak ada selisih yang perlu disimpan");
+    if (!note.trim()) return toast.error("Catatan/alasan koreksi wajib diisi");
+    if (!actor.trim()) return toast.error("Nama petugas opname wajib diisi");
+    setSaving(true);
+    try {
+      const response = await fetch("/api/super-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "stockOpnamePost",
+          Note: note.trim(),
+          By: actor.trim(),
+          Items: mismatches.map(({ row, physical: physicalQty }) => ({
+            stockRow: row.No,
+            ref: row.NoStok,
+            batch: row.Batch,
+            physicalQty,
+          })),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.status !== "success") throw new Error(result.message || "Koreksi opname gagal disimpan");
+      toast.success(`${result.adjusted || mismatches.length} stok berhasil disesuaikan`);
+      setPhysical({});
+      setNote("");
+      await onSuccess?.();
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Koreksi opname gagal disimpan");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (!open) return null;
@@ -272,22 +314,29 @@ export default function StockOpnameModal({
               )}
             </div>
 
-            <footer className="flex items-center justify-between gap-2 border-t p-3 sm:px-4">
-              <button
-                type="button"
-                onClick={() => setPhysical({})}
-                disabled={countedRows.length === 0}
-                className="text-xs font-semibold text-zinc-500 disabled:opacity-40"
-              >
-                Reset opname
-              </button>
+            <footer className="flex flex-col gap-2 border-t p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+              <div className="min-w-0 flex-1">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input value={actor} onChange={(event) => setActor(event.target.value)} placeholder="Nama petugas opname" className="h-10 rounded-xl border bg-transparent px-3 text-xs" />
+                  <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Alasan koreksi selisih" className="h-10 rounded-xl border bg-transparent px-3 text-xs" />
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={exportCsv}
                 disabled={countedRows.length === 0}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-zinc-900 px-4 text-xs font-bold text-white disabled:opacity-40 dark:bg-white dark:text-zinc-900"
+                className="hidden h-10 items-center gap-2 rounded-xl border px-3 text-xs font-bold disabled:opacity-40 sm:inline-flex"
               >
-                <Download size={14} /> Export hasil
+                <Download size={14} /> CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveAdjustment()}
+                disabled={saving || summary.mismatch === 0}
+                className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white disabled:opacity-40 sm:w-auto"
+              >
+                {saving ? <LoaderCircle size={14} className="animate-spin" /> : <ClipboardCheck size={14} />}
+                Simpan koreksi
               </button>
             </footer>
           </div>

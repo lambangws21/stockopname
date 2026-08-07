@@ -219,6 +219,13 @@ export default function Scanner({ onDetected }: ScannerProps) {
       setRaw(clean);
       setScannerError("");
 
+      const internal = clean.match(/^IMP\|([^|]+)\|([^|]+)$/i);
+      if (internal) {
+        void playBeep();
+        onDetected({ ref: internal[1].trim(), lot: internal[2].trim(), raw: clean });
+        return;
+      }
+
       const parsed = parseGS1(clean);
       const fallbackRef = extractRefFromRaw(clean) || clean;
       const lotFromRaw = extractLotFromRaw(clean);

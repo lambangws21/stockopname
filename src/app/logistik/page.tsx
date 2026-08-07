@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Ban,
+  Building2,
   CheckCircle2,
   ChevronDown,
   ClipboardSignature,
@@ -16,8 +17,10 @@ import {
   PackageCheck,
   RefreshCcw,
   Search,
+  Settings2,
   Table2,
   UserRound,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getStockWarnings, updateStockWarning } from "@/lib/logistics";
@@ -47,10 +50,12 @@ export default function LogisticsDashboardPage() {
   const [search, setSearch] = useState("");
   const [brand, setBrand] = useState("ALL");
   const [workflow, setWorkflow] = useState("ALL");
+  const [stockStatus, setStockStatus] = useState<"ALL" | "EMPTY" | "LOW">("ALL");
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
   const [focus, setFocus] = useState<"LOW" | "REQUEST" | "ORDERED">("LOW");
   const [showMovement, setShowMovement] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [editingRow, setEditingRow] = useState<StockWarningRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,13 +117,22 @@ export default function LogisticsDashboardPage() {
       ) return false;
       if (brand !== "ALL" && row.Brand !== brand) return false;
       if (workflow !== "ALL" && row.WorkflowStatus !== workflow) return false;
+      if (stockStatus === "EMPTY" && Number(row.SisaStock) > 0) return false;
+      if (stockStatus === "LOW" && Number(row.SisaStock) !== 1) return false;
       if (!query) return true;
       return [row.NoStok, row.Deskripsi, row.Batch, row.Implant, row.PIC]
         .join(" ")
         .toLowerCase()
         .includes(query);
     });
-  }, [brand, focus, rows, search, workflow]);
+  }, [brand, focus, rows, search, stockStatus, workflow]);
+
+  const groupedFiltered = useMemo(() => groupWarningRows(filtered), [filtered]);
+  const picSuggestions = useMemo(
+    () => Array.from(new Set(rows.map((row) => row.PIC?.trim()).filter(Boolean))).sort(),
+    [rows]
+  );
+  const hasDetailedFilter = search.trim() || brand !== "ALL" || workflow !== "ALL" || stockStatus !== "ALL";
 
   const summary = useMemo(
     () => ({
@@ -202,15 +216,17 @@ export default function LogisticsDashboardPage() {
         );
       }
       toast.success("Status logistik berhasil disimpan");
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal menyimpan");
+      return false;
     } finally {
       setSavingRow(null);
     }
   }
 
   return (
-    <main className="min-h-dvh bg-slate-50 pb-[max(1.5rem,env(safe-area-inset-bottom))] text-zinc-950 dark:bg-zinc-950 dark:text-white">
+    <main className="min-h-dvh bg-slate-50 pb-[calc(8rem+env(safe-area-inset-bottom))] text-zinc-950 dark:bg-zinc-950 dark:text-white sm:pb-10">
       <header className="bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:px-6 sm:pb-5 sm:pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-center justify-between">
@@ -218,6 +234,12 @@ export default function LogisticsDashboardPage() {
               <ArrowLeft size={15} /> Kembali
             </Link>
             <div className="flex items-center gap-2">
+              <Link
+                href="/mutasi-cabang"
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2.5 text-[10px] font-bold sm:gap-2 sm:px-3 sm:text-xs"
+              >
+                <Building2 size={15} /> <span className="hidden sm:inline">Mutasi cabang</span><span className="sm:hidden">Mutasi</span>
+              </Link>
               <Link
                 href="/serah-terima"
                 className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2.5 text-[10px] font-bold sm:gap-2 sm:px-3 sm:text-xs"
@@ -290,7 +312,7 @@ export default function LogisticsDashboardPage() {
               <option key={item}>{item}</option>
             ))}
           </select>
-          <div className="col-span-2 grid h-11 grid-cols-2 rounded-xl border bg-slate-50 p-1 dark:bg-zinc-950 sm:col-span-1">
+          <div className="col-span-2 hidden h-11 grid-cols-2 rounded-xl border bg-slate-50 p-1 dark:bg-zinc-950 sm:col-span-1 sm:grid">
             <button
               type="button"
               onClick={() => setViewMode("card")}
@@ -314,12 +336,32 @@ export default function LogisticsDashboardPage() {
               <Table2 size={14} /> Table
             </button>
           </div>
+          <div className="col-span-2 flex flex-wrap items-center gap-2 border-t pt-3 sm:col-span-4">
+            <span className="mr-1 text-[10px] font-black uppercase tracking-wide text-zinc-400">Status stok</span>
+            <QuickFilterChip active={stockStatus === "ALL"} onClick={() => setStockStatus("ALL")} label={`Semua ${rows.length}`} />
+            <QuickFilterChip active={stockStatus === "EMPTY"} onClick={() => setStockStatus("EMPTY")} label={`Habis ${summary.critical}`} tone="red" />
+            <QuickFilterChip active={stockStatus === "LOW"} onClick={() => setStockStatus("LOW")} label={`Menipis ${Math.max(0, summary.low - summary.critical)}`} tone="amber" />
+            {hasDetailedFilter && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setBrand("ALL");
+                  setWorkflow("ALL");
+                  setStockStatus("ALL");
+                }}
+                className="ml-auto text-[10px] font-bold text-blue-600 hover:underline"
+              >
+                Hapus filter
+              </button>
+            )}
+          </div>
         </section>
 
         <div className="flex items-end justify-between gap-3 px-1">
           <div>
             <h2 className="text-base font-black">{focus === "LOW" ? "Stok menipis" : focus === "REQUEST" ? "Permintaan perlu diproses" : "Stok sudah diminta"}</h2>
-            <p className="text-[10px] text-zinc-500">Menampilkan {filtered.length} item · tekan detail untuk mengubah proses.</p>
+            <p className="text-[10px] text-zinc-500">{groupedFiltered.length} produk · {filtered.length} LOT · tekan kelola untuk mengubah proses.</p>
           </div>
           <Link href="/#stock-data" className="shrink-0 text-[10px] font-bold text-blue-600 hover:underline">Lihat semua stok</Link>
         </div>
@@ -370,19 +412,20 @@ export default function LogisticsDashboardPage() {
           </div>
         ) : viewMode === "card" ? (
           <section className="grid gap-3 lg:grid-cols-2">
-            {filtered.map((row, index) => (
-              <LogisticsCard
-                key={[
-                  row.Row || "legacy",
-                  row.NoStok || "no-ref",
-                  row.Batch || "no-batch",
-                  index,
-                ].join("-")}
-                row={row}
-                selected={selectedKeys.has(warningKey(row))}
-                onToggle={() => toggleSelected(row)}
-                saving={savingRow === row.Row}
-                onSave={(patch) => void save(row, patch)}
+            {groupedFiltered.map((group) => (
+              <LogisticsGroupCard
+                key={group.key}
+                group={group}
+                selected={group.rows.every((row) => selectedKeys.has(warningKey(row)))}
+                onToggle={() => {
+                  const shouldSelect = !group.rows.every((row) => selectedKeys.has(warningKey(row)));
+                  setSelectedKeys((current) => {
+                    const next = new Set(current);
+                    group.rows.forEach((row) => shouldSelect ? next.add(warningKey(row)) : next.delete(warningKey(row)));
+                    return next;
+                  });
+                }}
+                onEdit={setEditingRow}
               />
             ))}
           </section>
@@ -427,6 +470,19 @@ export default function LogisticsDashboardPage() {
           </section>
         )}
       </div>
+      {editingRow && (
+        <LogisticsEditModal
+          key={warningKey(editingRow)}
+          row={editingRow}
+          picSuggestions={picSuggestions}
+          saving={savingRow === editingRow.Row}
+          onClose={() => setEditingRow(null)}
+          onSave={async (patch) => {
+            const saved = await save(editingRow, patch);
+            if (saved) setEditingRow(null);
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -443,59 +499,103 @@ function SummaryButton({ icon, label, value, detail, tone, active, onClick }: { 
   </button>;
 }
 
-function LogisticsCard({ row, selected, onToggle, saving, onSave }: { row: StockWarningRow; selected: boolean; onToggle: () => void; saving: boolean; onSave: (patch: Partial<StockWarningRow>) => void }) {
+function QuickFilterChip({ active, onClick, label, tone = "neutral" }: { active: boolean; onClick: () => void; label: string; tone?: "neutral" | "red" | "amber" }) {
+  const activeStyle = tone === "red" ? "border-red-600 bg-red-600 text-white" : tone === "amber" ? "border-amber-500 bg-amber-500 text-white" : "border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-zinc-950";
+  return (
+    <button type="button" onClick={onClick} className={`h-9 rounded-xl border px-3 text-[10px] font-bold transition ${active ? activeStyle : "bg-white text-zinc-600 hover:bg-slate-50 dark:bg-zinc-900 dark:text-zinc-300"}`}>
+      {label}
+    </button>
+  );
+}
+
+type WarningGroup = {
+  key: string;
+  rows: StockWarningRow[];
+  ref: string;
+  description: string;
+  brand: string;
+  implant: string;
+};
+
+function LogisticsGroupCard({ group, selected, onToggle, onEdit }: { group: WarningGroup; selected: boolean; onToggle: () => void; onEdit: (row: StockWarningRow) => void }) {
+  const criticalCount = group.rows.filter((row) => Number(row.SisaStock) <= 0).length;
+  const critical = criticalCount > 0;
+  const totalStock = group.rows.reduce((total, row) => total + Number(row.SisaStock || 0), 0);
+  return (
+    <article className={`overflow-hidden rounded-2xl border border-l-4 bg-white shadow-sm transition dark:bg-zinc-900 ${selected ? "ring-2 ring-blue-500" : ""} ${critical ? "border-red-300 border-l-red-600 bg-red-50/40 dark:border-red-900" : "border-amber-200 border-l-amber-500"}`}>
+      <div className="p-3.5 sm:p-4">
+        <div className="flex items-start gap-3">
+          <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Pilih semua LOT ${group.ref}`} className="mt-0.5 size-5 shrink-0 accent-blue-600" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[9px] font-black ${critical ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                {critical && <span className="size-1.5 animate-pulse rounded-full bg-red-600" />}{critical ? `${criticalCount} LOT HABIS` : "MENIPIS"}
+              </span>
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{group.brand || "-"}</span>
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{group.implant || "-"}</span>
+            </div>
+            <h2 className="mt-2 text-sm font-black">{group.ref}</h2>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-600 dark:text-zinc-300">{group.description}</p>
+          </div>
+          <div className={`min-w-14 rounded-xl px-2.5 py-2 text-center ${critical ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+            <b className="text-lg">{totalStock}</b><p className="text-[8px] font-bold">TOTAL</p>
+          </div>
+        </div>
+        <details className="group mt-3 overflow-hidden rounded-xl border bg-white/80 dark:bg-zinc-950/50">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-xs font-bold">
+            <span>{group.rows.length} LOT / batch</span>
+            <ChevronDown size={16} className="transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="divide-y border-t">
+            {group.rows.map((row) => {
+              const rowCritical = Number(row.SisaStock) <= 0;
+              return (
+                <div key={warningKey(row)} className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-black">LOT {row.Batch || "-"}</p>
+                    <p className="mt-0.5 truncate text-[9px] text-zinc-500">{row.WorkflowStatus || "BELUM DIPROSES"} · {row.PIC || "PIC belum dipilih"}</p>
+                  </div>
+                  <span className={`rounded-lg px-2 py-1 text-[10px] font-black ${rowCritical ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{Number(row.SisaStock || 0)} pcs</span>
+                  <button type="button" onClick={() => onEdit(row)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-bold text-blue-700">
+                    <Settings2 size={13} /> Kelola
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      </div>
+    </article>
+  );
+}
+
+function LogisticsEditModal({ row, picSuggestions, saving, onClose, onSave }: { row: StockWarningRow; picSuggestions: string[]; saving: boolean; onClose: () => void; onSave: (patch: Partial<StockWarningRow>) => Promise<void> }) {
   const [status, setStatus] = useState<LogisticsWorkflowStatus>(row.WorkflowStatus || "BELUM DIPROSES");
   const [pic, setPic] = useState(row.PIC || "");
   const [target, setTarget] = useState(toDateInput(row.TargetRefill));
   const [note, setNote] = useState(row.LogisticsNote || "");
-  const critical = Number(row.SisaStock) <= 0;
-  const message = [
-    "⚠️ *REFILL IMPLANT*",
-    `${row.Brand || "-"} • ${row.NoStok || "Tanpa REF"}`,
-    compactShareName(row.Deskripsi),
-    `Stok: ${Number(row.SisaStock || 0)} pcs`,
-    pic ? `PIC: ${pic}` : "",
-    target ? `Target: ${target}` : "",
-    note ? `Catatan: ${note}` : "",
-  ].filter(Boolean).join("\n");
-
+  const patch = { WorkflowStatus: status, PIC: pic, TargetRefill: target, LogisticsNote: note };
+  const message = buildSingleRequestMessage(row, pic, target, note);
   return (
-    <article className={`overflow-hidden rounded-2xl border border-l-4 bg-white shadow-sm transition dark:bg-zinc-900 ${selected ? "ring-2 ring-blue-500" : ""} ${critical ? "border-l-red-500" : "border-l-amber-500"}`}>
-      <div className="p-3 sm:p-4">
-        <div className="flex items-start justify-between gap-3">
-          <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Pilih ${row.NoStok}`} className="mt-0.5 size-5 shrink-0 accent-blue-600" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap gap-1.5">
-              <span className={`rounded-md px-2 py-1 text-[9px] font-black ${critical ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}>{critical ? "HABIS" : "MENIPIS"}</span>
-              <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{row.Brand || "-"}</span>
-              <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-600">{row.Implant || "-"}</span>
-            </div>
-            <h2 className="mt-2 text-sm font-black">{row.NoStok || "Tanpa REF"}</h2>
-            <p className="mt-1 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-300">{row.Deskripsi}</p>
-            <p className="mt-1 text-[10px] text-zinc-400">LOT {row.Batch || "-"}</p>
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-label={`Kelola permintaan ${row.NoStok}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-w-xl sm:rounded-3xl">
+        <header className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b bg-white/95 p-4 backdrop-blur dark:bg-zinc-900/95">
+          <div className="min-w-0">
+            <p className="text-[9px] font-black uppercase tracking-[0.18em] text-blue-600">Kelola permintaan refill</p>
+            <h2 className="mt-1 truncate text-base font-black">{row.NoStok || "Tanpa REF"} · LOT {row.Batch || "-"}</h2>
+            <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{row.Deskripsi}</p>
           </div>
-          <div className={`rounded-xl px-3 py-2 text-center ${critical ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"}`}><b className="text-xl">{row.SisaStock}</b><p className="text-[8px] font-bold">SISA</p></div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-2 dark:bg-zinc-950">
-          <div><p className="text-[8px] font-bold uppercase text-zinc-400">Proses</p><p className="mt-1 truncate text-[10px] font-black">{status}</p></div>
-          <div><p className="text-[8px] font-bold uppercase text-zinc-400">PIC</p><p className="mt-1 truncate text-[10px] font-black">{pic || "Belum ada"}</p></div>
-          <div><p className="text-[8px] font-bold uppercase text-zinc-400">Target</p><p className="mt-1 truncate text-[10px] font-black">{target || "Belum ada"}</p></div>
-        </div>
-
-        <details className="group mt-3 rounded-xl border">
-          <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-3 text-xs font-bold">
-            Ubah proses permintaan
-            <ChevronDown size={16} className="transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="grid gap-2 border-t p-3 sm:grid-cols-2">
+          <button type="button" onClick={onClose} className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border" aria-label="Tutup"><X size={18} /></button>
+        </header>
+        <div className="grid gap-4 p-4 sm:grid-cols-2">
           <label className="text-[10px] font-bold text-zinc-500">Status proses
             <select value={status} onChange={(event) => setStatus(event.target.value as LogisticsWorkflowStatus)} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm dark:bg-zinc-900">
               {WORKFLOW_OPTIONS.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
           <label className="text-[10px] font-bold text-zinc-500">PIC logistik
-            <input value={pic} onChange={(event) => setPic(event.target.value)} placeholder="Nama PIC" className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm" />
+            <input list="logistics-pic-options" value={pic} onChange={(event) => setPic(event.target.value)} placeholder="Pilih atau ketik nama PIC" className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm" />
+            <datalist id="logistics-pic-options">{picSuggestions.map((item) => <option key={item} value={item} />)}</datalist>
           </label>
           <label className="text-[10px] font-bold text-zinc-500">Target refill
             <input type="date" value={target} onChange={(event) => setTarget(event.target.value)} className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm" />
@@ -503,35 +603,23 @@ function LogisticsCard({ row, selected, onToggle, saving, onSave }: { row: Stock
           <label className="text-[10px] font-bold text-zinc-500">Catatan
             <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Supplier / kebutuhan operasi" className="mt-1 h-11 w-full rounded-xl border bg-transparent px-3 text-sm" />
           </label>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 px-3 pb-3 sm:grid-cols-3">
-          <button type="button" disabled={saving} onClick={() => onSave({ WorkflowStatus: status, PIC: pic, TargetRefill: target, LogisticsNote: note })} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white disabled:opacity-50">
+        </div>
+        <div className="grid grid-cols-2 gap-2 border-t p-4 sm:grid-cols-3">
+          <button type="button" disabled={saving} onClick={() => void onSave(patch)} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-bold text-white disabled:opacity-50">
             {saving ? <LoaderCircle size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Simpan
           </button>
-          <button type="button" onClick={() => onSave({ WorkflowStatus: "SUDAH DIINFORMASIKAN", PIC: pic, TargetRefill: target, LogisticsNote: note })} className="inline-flex items-center justify-center gap-2 rounded-xl border px-3 text-xs font-bold text-emerald-700">
+          <button type="button" disabled={saving} onClick={() => void onSave({ ...patch, WorkflowStatus: "SUDAH DIINFORMASIKAN" })} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-bold text-emerald-700 disabled:opacity-50">
             <CheckCircle2 size={15} /> Sudah info
           </button>
-          <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer")} className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white sm:col-span-1">
+          <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer")} className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white sm:col-span-1">
             <MessageCircle size={15} /> WhatsApp
           </button>
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => {
-              if (window.confirm("Tandai implant ini discontinue? Item tidak akan muncul lagi pada warning stok.")) {
-                onSave({ WorkflowStatus: "DISCONTINUE", PIC: pic, TargetRefill: target, LogisticsNote: note });
-              }
-            }}
-            className="col-span-2 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-zinc-300 px-3 text-xs font-bold text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 sm:col-span-3 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
+          <button type="button" disabled={saving} onClick={() => { if (window.confirm("Tandai implant ini discontinue? Item tidak akan muncul lagi pada warning stok.")) void onSave({ ...patch, WorkflowStatus: "DISCONTINUE" }); }} className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-xl border text-xs font-bold text-zinc-600 disabled:opacity-50 sm:col-span-3 dark:text-zinc-300">
             <Ban size={15} /> Tandai discontinue
           </button>
-          </div>
-        </details>
-        {row.InformedAt && <p className="mt-3 text-[10px] text-zinc-400">Sudah diinformasikan oleh {row.InformedBy || "Logistik"}.</p>}
-      </div>
-    </article>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -655,6 +743,33 @@ function warningKey(row: StockWarningRow) {
   return `${row.StockSheet || "Sheet1"}:${row.No || 0}:${stockIdentity(row.NoStok, row.Batch)}`;
 }
 
+function groupWarningRows(rows: StockWarningRow[]): WarningGroup[] {
+  const groups = new Map<string, WarningGroup>();
+  rows.forEach((row) => {
+    const ref = String(row.NoStok || "").trim();
+    const description = String(row.Deskripsi || "Tanpa deskripsi").trim();
+    const key = ref
+      ? `REF:${ref.toUpperCase()}`
+      : `NAME:${description.replace(/\s+/g, " ").toUpperCase()}`;
+    const current = groups.get(key);
+    if (current) current.rows.push(row);
+    else groups.set(key, {
+      key,
+      rows: [row],
+      ref: ref || "Tanpa REF",
+      description,
+      brand: String(row.Brand || ""),
+      implant: String(row.Implant || ""),
+    });
+  });
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      rows: group.rows.sort((a, b) => String(a.Batch || "").localeCompare(String(b.Batch || ""), "id", { numeric: true })),
+    }))
+    .sort((a, b) => a.description.localeCompare(b.description, "id", { numeric: true }));
+}
+
 function buildRequestMessage(rows: StockWarningRow[]) {
   const lines = [
     `📦 *REFILL IMPLANT (${rows.length})*`,
@@ -667,6 +782,19 @@ function buildRequestMessage(rows: StockWarningRow[]) {
   });
   lines.push("", "Mohon diproses.");
   return lines.join("\n");
+}
+
+function buildSingleRequestMessage(row: StockWarningRow, pic: string, target: string, note: string) {
+  return [
+    `Halo${pic ? ` ${pic}` : ""}, mohon bantuan refill implant berikut:`,
+    `Produk: ${compactShareName(row.Deskripsi)}`,
+    `REF: ${row.NoStok || "-"}`,
+    `LOT: ${row.Batch || "-"}`,
+    `Stok saat ini: ${Number(row.SisaStock || 0)} pcs`,
+    target ? `Target refill: ${target}` : "",
+    note ? `Catatan: ${note}` : "",
+    "Terima kasih.",
+  ].filter(Boolean).join("\n");
 }
 
 function compactShareName(value: unknown) {

@@ -131,6 +131,9 @@ export interface StockRow {
   KET: string;
   Discontinue?: boolean;
   SupplySource?: "OFFICE" | "SUPPORT PUSAT" | string;
+  /** Varian fisik dengan nama produk sama; hanya dibentuk pada UI. */
+  Variants?: StockRow[];
+  VariantCount?: number;
 }
 
 /* ================= GAS RESPONSE ================= */
@@ -179,6 +182,8 @@ export interface DeletePayload extends BasePayload {
 /* ================= MUTASI ================= */
 export interface MutasiPayload extends BasePayload {
   No: number;
+  expectedRef?: string;
+  expectedBatch?: string;
   qty: number;
   type: "in" | "out";
   movementReason:
@@ -192,6 +197,9 @@ export interface MutasiPayload extends BasePayload {
 /* ================= DUPLICATE ================= */
 export interface DuplicatePayload extends BasePayload {
   No: number;
+  NoStok: string;
+  Batch: string;
+  Qty: number;
 }
 
 

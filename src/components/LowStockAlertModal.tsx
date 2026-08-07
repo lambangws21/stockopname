@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Copy,
   MessageCircle,
+  PackageCheck,
   PackageX,
   FileSpreadsheet,
   LoaderCircle,
@@ -165,7 +166,7 @@ export default function LowStockAlertModal({
   return (
     <div className="fixed inset-0 z-[10030] flex items-end justify-center bg-zinc-950/60 backdrop-blur-sm sm:items-center sm:p-4">
       <section className="flex max-h-[96dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:rounded-3xl">
-        <header className="relative flex items-start justify-between gap-3 border-b bg-[#991b1b] px-4 pb-3 pt-[max(0.9rem,env(safe-area-inset-top))] text-white sm:px-5 sm:py-5">
+        <header className="relative z-40 flex items-start justify-between gap-3 border-b bg-[#991b1b] px-4 pb-3 pt-[max(0.9rem,env(safe-area-inset-top))] text-white sm:px-5 sm:py-5">
           <span className="absolute left-1/2 top-2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/30 sm:hidden" />
           <div className="flex gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25 sm:size-11">
@@ -184,43 +185,45 @@ export default function LowStockAlertModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full bg-white/10 p-2 hover:bg-white/20"
+            className="relative z-50 rounded-full bg-white/10 p-2 hover:bg-white/20"
             aria-label="Tutup peringatan"
           >
             <X size={17} />
           </button>
         </header>
 
-        <div className="grid grid-cols-2 gap-2 border-b bg-slate-50 p-2.5 text-left dark:bg-zinc-950/40 sm:p-3">
+        <div className="grid grid-cols-2 gap-2 border-b bg-slate-50 p-2 text-left dark:bg-zinc-950/40 sm:p-3">
           <button
             type="button"
-            onClick={() => onShowStatus("OUT")}
-            className="rounded-xl border border-red-100 bg-white px-3 py-2.5 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-900 dark:hover:bg-red-950/20 sm:rounded-2xl sm:px-4 sm:py-3"
+            onClick={() => { setStatusFilter("OUT"); setSelectionPreset("OUT"); setExcludedKeys(new Set()); setVisibleLimit(40); }}
+            className={`rounded-xl border px-3 py-2 text-left transition dark:bg-zinc-900 sm:rounded-2xl sm:px-4 sm:py-3 ${statusFilter === "OUT" ? "border-red-500 bg-red-50 ring-2 ring-red-100 dark:border-red-700" : "border-red-100 bg-white hover:bg-red-50 dark:border-red-900"}`}
           >
-            <p className="text-xl font-black text-red-600 sm:text-2xl">
-              {visibleOutOfStock.length}
-            </p>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Stok habis</p>
-            <p className="mt-0.5 text-[9px] text-zinc-400">Harus segera direfill</p>
+            <div className="flex items-center gap-2.5">
+              <p className="text-xl font-black text-red-600 sm:text-2xl">{outOfStock.length}</p>
+              <div className="min-w-0">
+                <p className="truncate text-[10px] font-bold uppercase tracking-wide text-zinc-600">Stok habis</p>
+                <p className="mt-0.5 hidden text-[9px] text-zinc-400 sm:block">Harus segera direfill</p>
+              </div>
+            </div>
           </button>
           <button
             type="button"
-            onClick={() => onShowStatus("LOW")}
-            className="rounded-xl border border-amber-100 bg-white px-3 py-2.5 hover:bg-amber-50 dark:border-amber-900 dark:bg-zinc-900 dark:hover:bg-amber-950/20 sm:rounded-2xl sm:px-4 sm:py-3"
+            onClick={() => { setStatusFilter("LOW"); setSelectionPreset("LOW"); setExcludedKeys(new Set()); setVisibleLimit(40); }}
+            className={`rounded-xl border px-3 py-2 text-left transition dark:bg-zinc-900 sm:rounded-2xl sm:px-4 sm:py-3 ${statusFilter === "LOW" ? "border-amber-500 bg-amber-50 ring-2 ring-amber-100 dark:border-amber-700" : "border-amber-100 bg-white hover:bg-amber-50 dark:border-amber-900"}`}
           >
-            <p className="text-xl font-black text-amber-600 sm:text-2xl">
-              {visibleLowStock.length}
-            </p>
-            <p className="text-[10px] font-semibold text-zinc-500">
-              Stok menipis
-            </p>
-            <p className="mt-0.5 text-[9px] text-zinc-400">Tersisa maks. {threshold}</p>
+            <div className="flex items-center gap-2.5">
+              <p className="text-xl font-black text-amber-600 sm:text-2xl">{lowStock.length}</p>
+              <div className="min-w-0">
+                <p className="truncate text-[10px] font-bold uppercase tracking-wide text-zinc-600">Stok menipis</p>
+                <p className="mt-0.5 hidden text-[9px] text-zinc-400 sm:block">Tersisa maks. {threshold}</p>
+              </div>
+            </div>
           </button>
         </div>
 
         <div className="border-b bg-white p-2.5 dark:bg-zinc-900 sm:p-3">
-          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_140px_130px]">
-            <label className="relative">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="relative col-span-2">
               <Search size={15} className="absolute left-3 top-3.5 text-zinc-400" />
               <input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleLimit(40); }} placeholder="Cari REF, nama, LOT..." className="h-11 w-full rounded-xl border bg-transparent pl-9 pr-9 text-xs outline-none focus:border-blue-500" />
               {query && <button type="button" onClick={() => setQuery("")} className="absolute right-2 top-2 flex size-7 items-center justify-center rounded-lg text-zinc-400" aria-label="Hapus pencarian"><X size={13} /></button>}
@@ -237,7 +240,7 @@ export default function LowStockAlertModal({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-2.5 dark:bg-zinc-950/50 sm:space-y-4 sm:p-5">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50 p-2.5 pb-32 dark:bg-zinc-950/50 sm:space-y-4 sm:p-5 sm:pb-5">
           <section className="overflow-hidden rounded-2xl border bg-white dark:bg-zinc-900">
             <div className="p-3.5">
             <button
@@ -261,15 +264,6 @@ export default function LowStockAlertModal({
                 />
               </span>
             </button>
-            <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
-              {([[
-                "OUT",
-                `Habis (${outOfStock.length})`,
-              ], ["LOW", `Menipis (${lowStock.length})`], ["ALL", `Semua (${warningRows.length})`]] as const).map(([value, label]) => (
-                <button key={value} type="button" onClick={() => { setSelectionPreset(value); setExcludedKeys(new Set()); }} className={`h-9 rounded-lg px-1 text-[9px] font-black transition ${selectionPreset === value ? "bg-blue-600 text-white shadow-sm" : "text-zinc-500"}`}>{label}</button>
-              ))}
-            </div>
-
             {shareExpanded && (
             <>
             <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -349,6 +343,30 @@ export default function LowStockAlertModal({
           )}
         </div>
 
+        {selectedRows.length > 0 && (
+          <div className="flex shrink-0 items-center gap-2 border-t border-emerald-100 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30 sm:px-5">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[10px] font-black text-emerald-950 dark:text-emerald-100">
+                {selectedRows.length} implant dipilih
+              </p>
+              <button
+                type="button"
+                onClick={() => { setSelectionPreset("ALL"); setExcludedKeys(new Set()); }}
+                className="mt-0.5 text-[9px] font-bold text-blue-600"
+              >
+                Pilih semua hasil filter
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => openWhatsApp(shareText)}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-3 text-[10px] font-black text-white hover:bg-emerald-500"
+            >
+              <MessageCircle size={14} /> Draf WA terpilih
+            </button>
+          </div>
+        )}
+
         <footer className="grid grid-cols-3 gap-2 border-t bg-white px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:bg-zinc-900 sm:flex sm:justify-end sm:px-5 sm:pb-3">
           <Link href="/logistik" onClick={onClose} className="inline-flex h-10 items-center justify-center rounded-xl border px-2 text-[9px] font-bold sm:px-4 sm:text-xs">
             Halaman penuh
@@ -359,7 +377,7 @@ export default function LowStockAlertModal({
           <button
             type="button"
             onClick={() => onShowStatus(outOfStock.length > 0 ? "OUT" : "LOW")}
-            className="h-10 rounded-xl bg-red-600 px-2 text-[9px] font-bold text-white hover:bg-red-500 sm:px-4 sm:text-xs"
+            className="h-10 rounded-xl bg-blue-600 px-2 text-[9px] font-bold text-white hover:bg-blue-500 sm:px-4 sm:text-xs"
           >
             Tampilkan di tabel
           </button>
@@ -518,12 +536,12 @@ function AlertGroup({
           return (
           <article
             key={stockRowKey(row)}
-            className={`rounded-xl border border-l-4 bg-white p-3 shadow-sm dark:bg-zinc-900 sm:rounded-2xl sm:p-3.5 ${styles} ${
+            className={`rounded-xl border border-l-4 bg-white p-2.5 shadow-sm dark:bg-zinc-900 sm:rounded-2xl sm:p-3 ${styles} ${
               rowSelected ? "" : "opacity-50"
             }`}
           >
             <div className="flex items-start justify-between gap-3">
-              <label className="flex shrink-0 cursor-pointer pt-1">
+              <label className="flex shrink-0 cursor-pointer pt-8 sm:pt-1">
                 <input
                   type="checkbox"
                   checked={rowSelected}
@@ -548,7 +566,7 @@ function AlertGroup({
                     {row.Implant || "Tanpa kategori"}
                   </span>
                 </div>
-                <p className="mt-1.5 text-xs font-black text-zinc-900 dark:text-white sm:mt-2">
+                <p className="mt-1.5 text-xs font-black text-zinc-900 dark:text-white">
                   {row.NoStok || "Tanpa REF"}
                 </p>
                 <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-zinc-600 dark:text-zinc-300">
@@ -557,7 +575,7 @@ function AlertGroup({
                 <p className="mt-1 hidden text-[10px] text-zinc-500 sm:block">
                   LOT / Batch: <b>{row.Batch || "-"}</b>
                 </p>
-                <p className={`mt-1.5 text-[9px] font-semibold sm:mt-2 sm:text-[10px] ${
+                <p className={`mt-1 text-[9px] font-semibold ${
                   tone === "red" ? "text-red-600" : "text-amber-600"
                 }`}>
                   {tone === "red"
@@ -568,19 +586,19 @@ function AlertGroup({
                   type="button"
                   disabled={requestingKeys.has(stockRowKey(row)) || orderedKeys.has(stockRowKey(row))}
                   onClick={() => onMarkOrdered(row)}
-                  className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-2.5 text-[9px] font-black text-blue-700 disabled:opacity-60 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300"
+                  className="mt-1.5 inline-flex size-8 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 text-blue-700 disabled:opacity-60 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300"
+                  aria-label={orderedKeys.has(stockRowKey(row)) ? "Sudah dipesan" : "Tandai sedang dipesan"}
+                  title={orderedKeys.has(stockRowKey(row)) ? "Sudah dipesan" : "Tandai sedang dipesan"}
                 >
-                  {requestingKeys.has(stockRowKey(row)) ? <LoaderCircle size={12} className="animate-spin" /> : orderedKeys.has(stockRowKey(row)) ? <Check size={12} /> : <Share2 size={12} />}
-                  {orderedKeys.has(stockRowKey(row)) ? "Sudah dipesan" : "Tandai dipesan"}
+                  {requestingKeys.has(stockRowKey(row)) ? <LoaderCircle size={12} className="animate-spin" /> : orderedKeys.has(stockRowKey(row)) ? <Check size={12} /> : <PackageCheck size={12} />}
                 </button>
               </div>
-              <div className={`shrink-0 rounded-lg px-2 py-1.5 text-center sm:rounded-xl sm:px-2.5 sm:py-2 ${
+              <div className={`shrink-0 rounded-full px-2.5 py-1 text-center ${
                 tone === "red"
                   ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300"
                   : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
               }`}>
-                <p className="text-lg font-black sm:text-xl">{Number(row.TotalQty || 0)}</p>
-                <p className="text-[8px] font-bold uppercase">Sisa</p>
+                <p className="text-[10px] font-black">Sisa {Number(row.TotalQty || 0)}</p>
               </div>
             </div>
           </article>

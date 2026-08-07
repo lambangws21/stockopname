@@ -74,7 +74,17 @@ export function useStockTable(data: StockRow[]): UseStockTableResult {
      2️⃣ SORTED DATA
   ------------------------------------------------------- */
   const sorted = useMemo(() => {
-    if (!sortField) return filtered;
+    const collator = new Intl.Collator("id-ID", {
+      numeric: true,
+      sensitivity: "base",
+    });
+    const compareIdentity = (a: StockRow, b: StockRow) =>
+      collator.compare(String(a.Deskripsi || ""), String(b.Deskripsi || "")) ||
+      collator.compare(String(a.NoStok || ""), String(b.NoStok || "")) ||
+      collator.compare(String(a.Batch || ""), String(b.Batch || "")) ||
+      Number(a.No || 0) - Number(b.No || 0);
+
+    if (!sortField) return [...filtered].sort(compareIdentity);
 
     return [...filtered].sort((a, b) => {
       const A = a[sortField] ?? "";
@@ -85,13 +95,15 @@ export function useStockTable(data: StockRow[]): UseStockTableResult {
 
       // numeric sort
       if (!isNaN(numA) && !isNaN(numB)) {
-        return sortOrder === "asc" ? numA - numB : numB - numA;
+        const result = sortOrder === "asc" ? numA - numB : numB - numA;
+        return result || compareIdentity(a, b);
       }
 
       // string sort
-      return sortOrder === "asc"
+      const result = sortOrder === "asc"
         ? String(A).localeCompare(String(B))
         : String(B).localeCompare(String(A));
+      return result || compareIdentity(a, b);
     });
   }, [filtered, sortField, sortOrder]);
 

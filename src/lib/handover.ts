@@ -17,6 +17,14 @@ export async function listOnlineHandovers(id?: string) {
   return json.data ?? [];
 }
 
+export async function getPublicOnlineHandover(id: string, token: string) {
+  const query = new URLSearchParams({ action: "handoverPublic", id, token });
+  const response = await fetch(`${API}?${query}`, { cache: "no-store" });
+  const json = (await response.json()) as { status: "success" | "error"; message?: string; data?: OnlineHandover[] };
+  if (!response.ok || json.status === "error") throw new Error(json.message || "Dokumen verifikasi tidak dapat dibuka");
+  return json.data?.[0];
+}
+
 export async function saveOnlineHandover(
   handover: OnlineHandover,
   accept = false

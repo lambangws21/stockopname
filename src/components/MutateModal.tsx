@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Building2,
@@ -26,6 +26,7 @@ type MovementReason =
 interface MutateModalProps {
   open: boolean;
   row: StockRow | null;
+  variants?: StockRow[];
   sheet: string;
   context?: GasSheetContext;
   onClose: () => void;
@@ -71,7 +72,8 @@ const ACTIONS: Array<{
 
 export default function MutateModal({
   open,
-  row,
+  row: initialRow,
+  variants = [],
   sheet,
   context,
   onClose,
@@ -88,8 +90,53 @@ export default function MutateModal({
   const [hospital, setHospital] = useState("");
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [selectedRowNo, setSelectedRowNo] = useState(0);
+  const [identityEditorOpen, setIdentityEditorOpen] = useState(false);
+  const [identitySearch, setIdentitySearch] = useState("");
 
-  if (!open || !row) return null;
+  useEffect(() => {
+    if (!open || !initialRow) return;
+    setSelectedRowNo(initialRow.No);
+    setIdentityEditorOpen(false);
+    setIdentitySearch("");
+  }, [initialRow, open]);
+
+  const activeRow =
+    variants.find((item) => item.No === selectedRowNo) || initialRow;
+  const matchingVariants = useMemo(() => {
+    if (!initialRow) return [];
+    const normalize = (value: unknown) =>
+      String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
+    const initialBrand = normalize(initialRow.Brand);
+    const initialImplant = normalize(initialRow.Implant);
+    const initialDescription = normalize(initialRow.Deskripsi);
+    const matches = variants.filter((item) => {
+      const sameBrand = normalize(item.Brand) === initialBrand;
+      const sameCategory = normalize(item.Implant) === initialImplant;
+      const sameDescription = normalize(item.Deskripsi) === initialDescription;
+      return sameBrand && (sameCategory || sameDescription);
+    });
+    const collator = new Intl.Collator("id-ID", { numeric: true, sensitivity: "base" });
+    return (matches.length ? matches : [initialRow]).sort(
+      (first, second) =>
+        collator.compare(String(first.Deskripsi || ""), String(second.Deskripsi || "")) ||
+        collator.compare(String(first.NoStok || ""), String(second.NoStok || "")) ||
+        collator.compare(String(first.Batch || ""), String(second.Batch || ""))
+    );
+  }, [initialRow, variants]);
+  const visibleIdentityVariants = useMemo(() => {
+    const query = identitySearch.trim().toLowerCase();
+    if (!query) return matchingVariants;
+    return matchingVariants.filter((item) =>
+      [item.NoStok, item.Batch, item.Deskripsi, item.Implant]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [identitySearch, matchingVariants]);
+
+  if (!open || !activeRow) return null;
+  const row = activeRow;
 
   const selectedAction = ACTIONS.find(
     (action) => action.reason === selectedReason
@@ -164,7 +211,11 @@ export default function MutateModal({
           ]
             .filter(Boolean)
             .join(" • ")
-        : note.trim() || "Refill stok";
+        : selectedReason === "MOBILISASI_KELUAR"
+          ? `Support luar cabang • Tujuan: ${note.trim()}`
+          : selectedReason === "MOBILISASI_MASUK"
+            ? `Kembali dari luar cabang • Asal: ${note.trim()}`
+            : note.trim() || "Refill stok";
 
     setLoading(true);
     setErrMsg(null);
@@ -175,14 +226,18 @@ export default function MutateModal({
           row.No,
           qty,
           selectedReason as "REFILL" | "MOBILISASI_MASUK",
-          safeNote
+          safeNote,
+          row.NoStok,
+          row.Batch
         );
       } else {
         await mutateOut(
           row.No,
           qty,
           selectedReason as "OPERASI" | "MOBILISASI_KELUAR",
-          safeNote
+          safeNote,
+          row.NoStok,
+          row.Batch
         );
       }
 
@@ -226,16 +281,34 @@ export default function MutateModal({
         </div>
 
         <div className="space-y-4 p-4 sm:p-5">
-          <div className="rounded-2xl bg-zinc-100 p-3 dark:bg-zinc-800">
-            <div className="font-semibold">{row.Deskripsi}</div>
-            <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-zinc-500">
-              <span>REF {row.NoStok || "-"}</span>
-              <span>Batch {row.Batch || "-"}</span>
-              <span className="font-bold text-zinc-900 dark:text-white">
-                Stok {row.TotalQty}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 dark:border-zinc-700 dark:bg-zinc-800">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[9px] font-black uppercase tracking-[0.14em] text-blue-600">
+                Identitas stok yang diproses
+              </p>
+              {matchingVariants.length > 0 && (
+                <button type="button" onClick={() => setIdentityEditorOpen((value) => !value)} className="rounded-lg border bg-white px-2 py-1 text-[8px] font-black text-blue-700 dark:bg-zinc-900 dark:text-blue-300">
+                  {identityEditorOpen ? "Selesai" : "Edit REF / LOT"}
+                </button>
+              )}
+            </div>
+            <div className="mt-1.5 text-sm font-black leading-5 sm:text-base">{row.Deskripsi}</div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-blue-200 bg-white px-3 py-2.5 dark:border-blue-900 dark:bg-zinc-900">
+                <span className="block text-[8px] font-black uppercase tracking-wide text-zinc-400">Nomor REF</span>
+                <b className="mt-1 block break-all text-sm text-blue-700 dark:text-blue-300">{row.NoStok || "-"}</b>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-white px-3 py-2.5 dark:border-amber-900 dark:bg-zinc-900">
+                <span className="block text-[8px] font-black uppercase tracking-wide text-zinc-400">LOT / Batch</span>
+                <b className="mt-1 block break-all text-sm text-amber-700 dark:text-amber-300">{row.Batch || "-"}</b>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+              <span className="rounded-lg bg-white px-2 py-1 font-black text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-white">
+                Stok {row.TotalQty} pcs
               </span>
               <span
-                className={`rounded-full px-2 py-0.5 font-bold ${
+                className={`rounded-lg px-2 py-1 font-bold ${
                   supportPusat
                     ? "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                     : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
@@ -244,6 +317,49 @@ export default function MutateModal({
                 {supportPusat ? "Support Pusat" : "Stok Office"}
               </span>
             </div>
+            {identityEditorOpen && (
+              <div className="mt-3 space-y-2 border-t pt-3">
+                <p className="text-[9px] font-bold leading-4 text-zinc-500">
+                  Pilih REF dan LOT fisik yang benar. Daftar dibatasi pada brand dan kategori implant yang sama.
+                </p>
+                <input
+                  value={identitySearch}
+                  onChange={(event) => setIdentitySearch(event.target.value)}
+                  placeholder="Cari REF, LOT, ukuran, atau nama..."
+                  className="h-10 w-full rounded-xl border bg-white px-3 text-xs outline-none focus:border-blue-500 dark:bg-zinc-900"
+                />
+                <div className="max-h-52 space-y-2 overflow-y-auto">
+                  {visibleIdentityVariants.map((variant) => {
+                    const selected = variant.No === row.No;
+                    return (
+                      <button
+                        key={`${variant.No}-${variant.NoStok}-${variant.Batch}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRowNo(variant.No);
+                          setIdentityEditorOpen(false);
+                          setIdentitySearch("");
+                          setQty(1);
+                          setErrMsg(null);
+                        }}
+                        className={`flex w-full items-center gap-2 rounded-xl border p-2.5 text-left ${selected ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30" : "bg-white dark:bg-zinc-900"}`}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <b className="block text-[10px] text-blue-700 dark:text-blue-300">REF {variant.NoStok || "-"}</b>
+                          <span className="mt-0.5 block text-[9px] font-bold text-amber-700 dark:text-amber-300">LOT {variant.Batch || "-"}</span>
+                        </span>
+                        <span className="rounded-lg bg-slate-100 px-2 py-1 text-[9px] font-black dark:bg-zinc-800">Stok {variant.TotalQty}</span>
+                      </button>
+                    );
+                  })}
+                  {visibleIdentityVariants.length === 0 && (
+                    <p className="rounded-xl border border-dashed p-5 text-center text-[10px] text-zinc-500">
+                      REF atau LOT tidak ditemukan pada kategori ini.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {!selectedReason ? (
@@ -285,6 +401,10 @@ export default function MutateModal({
                 <div className="font-bold">{selectedAction?.label}</div>
                 <div className="text-xs opacity-80">
                   {selectedAction?.description}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-current/15 pt-2.5 text-[9px] font-black">
+                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">REF {row.NoStok || "-"}</span>
+                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">LOT {row.Batch || "-"}</span>
                 </div>
               </div>
 
@@ -407,8 +527,10 @@ export default function MutateModal({
 
               <div>
                 <label className="mb-1.5 block text-sm font-semibold">
-                  {selectedReason.includes("MOBILISASI")
-                    ? "Cabang tujuan/asal"
+                  {selectedReason === "MOBILISASI_KELUAR"
+                    ? "Tujuan support luar cabang"
+                    : selectedReason === "MOBILISASI_MASUK"
+                    ? "Asal pengembalian cabang"
                     : selectedReason === "OPERASI"
                     ? "Catatan tambahan (opsional)"
                     : "Keterangan (opsional)"}
@@ -419,7 +541,7 @@ export default function MutateModal({
                   onChange={(event) => setNote(event.target.value)}
                   placeholder={
                     selectedReason === "MOBILISASI_KELUAR"
-                      ? "Contoh: Cabang Surabaya"
+                      ? "Contoh: Jawa Tengah, Jakarta, atau Cabang Surabaya"
                       : selectedReason === "MOBILISASI_MASUK"
                       ? "Contoh: Kembali dari Cabang Makassar"
                       : selectedReason === "OPERASI"

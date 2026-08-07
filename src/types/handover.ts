@@ -82,5 +82,8 @@ export interface OnlineHandover {
   VerificationToken?: string;
   InventoryPostedAt?: string;
   HospitalUpdatedAt?: string;
+  PhotoUrl?: string;
+  PhotoFileId?: string;
+  PhotoDataUrl?: string;
   By?: string;
 }

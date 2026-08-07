@@ -270,6 +270,11 @@ export async function POST(req: NextRequest) {
       "handoverAccept",
       "handoverSettle",
       "handoverSupplement",
+      "branchTransferSave",
+      "branchTransferCorrect",
+      "stockOpnamePost",
+      "inventoryLocationSync",
+      "inventoryConditionPost",
     ]);
     const timeoutMs = transactionActions.has(action)
       ? GAS_TRANSACTION_TIMEOUT_MS

@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 // import KpiCards from "@/components/dashboard/KpiCard";
 import StockTablePremium from "@/components/StockTablePremium";
 import Scanner from "@/components/stock/Scanner";
@@ -9,14 +10,15 @@ import {
   Activity,
   AlertTriangle,
   Bell,
+  BookOpen,
   Boxes,
   CheckCircle2,
+  ChevronDown,
   ClipboardSignature,
   FileClock,
   Hospital,
   PackagePlus,
   QrCode,
-  RefreshCw,
   Search,
   TrendingDown,
   TrendingUp,
@@ -26,7 +28,9 @@ import {
 } from "lucide-react";
 import { gasGET, gasGetHistory } from "@/lib/gas";
 import { listOnlineHandovers } from "@/lib/handover";
+import { listBranchTransfers } from "@/lib/branch-transfer";
 import type { OnlineHandover } from "@/types/handover";
+import type { BranchTransfer } from "@/types/branch-transfer";
 import type { StockRow } from "@/types/stock";
 import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 import type { HistoryRow } from "@/types/history";
@@ -90,6 +94,13 @@ export function StockManagementPage() {
           </div>
 
           <nav className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:flex lg:flex-wrap lg:justify-end" aria-label="Menu Stock Implant">
+            <Link
+              href="/scanner"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-500"
+            >
+              <QrCode size={15} />
+              Scanner Universal
+            </Link>
             <button
               type="button"
               onClick={() => setScanOpen((value) => !value)}
@@ -208,17 +219,18 @@ function DashboardOverview({
 }) {
   const [stock, setStock] = useState<StockRow[]>([]);
   const [documents, setDocuments] = useState<OnlineHandover[]>([]);
+  const [branchTransfers, setBranchTransfers] = useState<BranchTransfer[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [, setRefreshing] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [lowStockOpen, setLowStockOpen] = useState(false);
   const [listModal, setListModal] = useState<DashboardListKind | null>(null);
   const [listSearch, setListSearch] = useState("");
-  const [lastRefreshAt, setLastRefreshAt] = useState("");
   const [mobileSummaryTab, setMobileSummaryTab] =
     useState<MobileSummaryTab>("LOW_STOCK");
+  const [mobileSummaryOpen, setMobileSummaryOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [documentFilter, setDocumentFilter] = useState<
     "ALL" | "DIKIRIM" | "DITERIMA"
@@ -232,15 +244,16 @@ function DashboardOverview({
     if (initial) setLoading(true);
     else setRefreshing(true);
     try {
-      const [stockResult, handoverRows, historyResult] = await Promise.all([
+      const [stockResult, handoverRows, historyResult, transferRows] = await Promise.all([
         gasGET("Sheet1"),
         listOnlineHandovers(),
         gasGetHistory("Sheet1"),
+        listBranchTransfers(),
       ]);
       setStock(stockResult.data ?? []);
       setDocuments(handoverRows);
       setHistory(historyResult.data ?? []);
-      setLastRefreshAt(new Date().toISOString());
+      setBranchTransfers(transferRows);
     } catch {
       // Pertahankan snapshot terakhir jika refresh sementara gagal.
     } finally {
@@ -317,10 +330,18 @@ function DashboardOverview({
   const returnHistory = history.filter(
     (row) => String(row.Action).toUpperCase() === "MOBILISASI_MASUK"
   );
-  const supportOutTotal = outstandingSupport.reduce(
-    (total, item) => total + item.quantity,
-    0
+  const activeBranchTransfers = branchTransfers.filter(
+    (transfer) => transfer.Status === "DIKIRIM" || transfer.Status === "DITERIMA_SEBAGIAN" || transfer.Status === "DITERIMA"
   );
+  const supportOutTotal = activeBranchTransfers.length
+    ? activeBranchTransfers.reduce(
+        (total, transfer) =>
+          total + transfer.Items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+        0
+      )
+    : outstandingSupport
+        .filter((item) => !item.location.startsWith("RS "))
+        .reduce((total, item) => total + item.quantity, 0);
   const supportReturnTotal = returnHistory.reduce(
     (total, row) => total + historyMovementQty(row),
     0
@@ -369,7 +390,7 @@ function DashboardOverview({
 
   return (
     <>
-      <section className="relative z-30 overflow-visible bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:rounded-2xl sm:p-5">
+      <section className={`relative overflow-visible bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:rounded-2xl sm:p-5 ${notificationsOpen ? "z-[10020]" : "z-30"}`}>
         <div className="flex flex-col gap-3 sm:gap-4 xl:flex-row xl:items-center">
           <div className="flex items-center gap-3">
             <span className="flex size-10 items-center justify-center rounded-xl bg-blue-600 sm:size-11">
@@ -386,7 +407,7 @@ function DashboardOverview({
           <button
             type="button"
             onClick={() => setCommandOpen(true)}
-            className="flex h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3 text-left text-xs text-slate-300 xl:ml-6 xl:max-w-xl"
+            className="hidden h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border border-white/15 bg-white/10 px-3 text-left text-xs text-slate-300 sm:flex xl:ml-6 xl:max-w-xl"
           >
             <Search size={16} />
             <span className="min-w-0 flex-1 truncate">
@@ -397,20 +418,7 @@ function DashboardOverview({
             </kbd>
           </button>
 
-          <div className="grid grid-cols-[44px_44px_minmax(0,1fr)_minmax(0,1fr)] gap-2 sm:flex">
-            <button
-              type="button"
-              onClick={() => void refreshDashboard(false)}
-              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-2 text-[9px] font-bold sm:px-3"
-              title="Refresh dashboard"
-            >
-              <RefreshCw size={15} className={loading || refreshing ? "animate-spin" : ""} />
-              <span className="hidden 2xl:inline">
-                {lastRefreshAt
-                  ? `Update ${formatRefreshTime(lastRefreshAt)}`
-                  : "Refresh"}
-              </span>
-            </button>
+          <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] gap-2 sm:flex">
             <div className="relative z-50">
               <button
                 type="button"
@@ -426,8 +434,16 @@ function DashboardOverview({
                 )}
               </button>
               {notificationsOpen && (
-                <div className="absolute right-0 top-[calc(100%+0.6rem)] z-80 max-h-[70dvh] w-[min(380px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3 text-zinc-900 shadow-2xl ring-1 ring-slate-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white">
-                  <div className="flex items-center justify-between">
+                <>
+                <button
+                  type="button"
+                  className="fixed inset-0 z-70 bg-slate-950/50 backdrop-blur-[1px] sm:hidden"
+                  onClick={() => setNotificationsOpen(false)}
+                  aria-label="Tutup panel notifikasi"
+                />
+                <div className="fixed inset-x-0 bottom-0 z-80 max-h-[85dvh] w-full overflow-y-auto rounded-t-3xl border border-slate-200 bg-white px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 text-zinc-900 shadow-2xl ring-1 ring-slate-950/5 dark:border-zinc-700 dark:bg-zinc-900 dark:text-white sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-[calc(100%+0.6rem)] sm:max-h-[70dvh] sm:w-[380px] sm:rounded-2xl sm:p-3">
+                  <span className="mx-auto mb-2 block h-1 w-10 rounded-full bg-zinc-300 dark:bg-zinc-700 sm:hidden" />
+                  <div className="sticky top-0 z-10 -mx-3 flex items-center justify-between border-b bg-white px-3 pb-3 dark:bg-zinc-900 sm:static sm:mx-0 sm:border-0 sm:p-0">
                     <div>
                       <p className="text-xs font-black">Perlu tindakan</p>
                       <p className="mt-0.5 text-[9px] text-zinc-500">
@@ -463,7 +479,7 @@ function DashboardOverview({
                             </span>
                             <span className="min-w-0 flex-1">
                               <b className="block truncate">{row.Deskripsi}</b>
-                              <span className="block truncate text-[8px] text-red-500">
+                              <span className="block truncate text-[9px] font-medium text-slate-600">
                                 {row.NoStok} · {row.Brand}
                               </span>
                             </span>
@@ -495,7 +511,7 @@ function DashboardOverview({
                               className="block rounded-lg bg-white/70 p-2"
                             >
                               <b className="block truncate">
-                                {document.Hospital || document.ID || "Dokumen"}
+                                {document.Hospital || "Rumah sakit belum diisi"}
                               </b>
                               <span className="mt-0.5 block truncate text-[8px] text-amber-600">
                                 {document.Procedure} · {document.Sender || "Logistik"}
@@ -507,6 +523,7 @@ function DashboardOverview({
                     </div>
                   </div>
                 </div>
+                </>
               )}
             </div>
             <Link
@@ -518,15 +535,23 @@ function DashboardOverview({
             <button
               type="button"
               onClick={onOpenOpname}
-              className="inline-flex h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2 text-[9px] font-black sm:flex-none sm:gap-2 sm:px-3 sm:text-[10px]"
+              className="hidden h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-white/15 bg-white/10 px-2 text-[9px] font-black sm:inline-flex sm:flex-none sm:gap-2 sm:px-3 sm:text-[10px]"
             >
               <PackagePlus size={15} /> <span className="truncate sm:hidden">Opname</span><span className="hidden sm:inline">Stock Opname</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("open-app-tutorial"))}
+              className="inline-flex size-11 items-center justify-center rounded-xl border border-white/15 bg-white/10 sm:w-auto sm:gap-2 sm:px-3"
+              aria-label="Buka panduan"
+            >
+              <BookOpen size={16} /> <span className="hidden text-[10px] font-black sm:inline">Panduan</span>
             </button>
           </div>
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 sm:gap-4 sm:p-0">
+      <section className="flex snap-x gap-2 overflow-x-auto p-3 pb-1 sm:grid sm:grid-cols-4 sm:gap-4 sm:overflow-visible sm:p-0">
         <MetricCard
           label="Total stok tersedia"
           value={totalStock}
@@ -566,6 +591,23 @@ function DashboardOverview({
 
       <section className="px-3 sm:hidden">
         <article className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <button
+            type="button"
+            onClick={() => setMobileSummaryOpen((value) => !value)}
+            className="flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-left"
+            aria-expanded={mobileSummaryOpen}
+          >
+            <span>
+              <b className="block text-[11px] font-black">Ringkasan Dashboard</b>
+              <span className="block text-[8px] text-zinc-500">Serah terima, stok kritis, dan pergerakan</span>
+            </span>
+            <span className="inline-flex items-center gap-1 text-[9px] font-black text-blue-600">
+              {mobileSummaryOpen ? "Sembunyikan" : "Tampilkan"}
+              <ChevronDown size={14} className={`transition ${mobileSummaryOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+
+          {mobileSummaryOpen && <>
           <div className="border-b p-2">
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
               {[
@@ -634,14 +676,14 @@ function DashboardOverview({
                   key={`${row.No}-${row.Batch}`}
                   type="button"
                   onClick={() => onSelectStock(row)}
-                  className="flex w-full items-center gap-3 rounded-xl border border-red-100 bg-red-50/70 p-2.5 text-left dark:border-red-950 dark:bg-red-950/20"
+                  className="relative w-full rounded-xl border border-red-100 bg-red-50/70 p-2.5 pr-16 text-left dark:border-red-950 dark:bg-red-950/20"
                 >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-red-600 text-xs font-black text-white">
-                    {stockRemaining(row)}
+                  <span className={`absolute right-2.5 top-2.5 rounded-full px-2 py-1 text-[8px] font-black ${stockRemaining(row) <= 0 ? "bg-red-600 text-white" : "bg-amber-100 text-amber-800"}`}>
+                    {stockRemaining(row) <= 0 ? "Habis" : `${stockRemaining(row)} sisa`}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <b className="block truncate text-[10px]">{row.Deskripsi}</b>
-                    <span className="mt-0.5 block truncate text-[8px] text-red-600">{row.NoStok} · {row.Brand}</span>
+                  <span className="block min-w-0">
+                    <b className="line-clamp-2 block text-[10px] leading-4">{row.Deskripsi}</b>
+                    <span className="mt-0.5 block truncate text-[8px] font-medium text-slate-600 dark:text-zinc-300">{row.NoStok} · {row.Brand}</span>
                   </span>
                 </button>
               ))}
@@ -678,6 +720,7 @@ function DashboardOverview({
               ))}
             </div>
           )}
+          </>}
         </article>
       </section>
 
@@ -725,7 +768,7 @@ function DashboardOverview({
                     {document.Hospital || "Rumah sakit belum diisi"}
                   </p>
                   <p className="mt-1 truncate text-[9px] text-zinc-500">
-                    {document.ID} · {document.Procedure} · {document.Surgeon || "Dokter -"}
+                    {document.Procedure} · {document.Surgeon || "Dokter -"}
                   </p>
                 </div>
                 <span className="text-[10px] font-bold text-zinc-500">
@@ -838,7 +881,7 @@ function DashboardOverview({
                 ref={searchRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Cari RS, dokter, dokumen, REF, LOT..."
+                placeholder="Cari RS, dokter, tindakan, REF, LOT..."
                 className="h-14 min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
               <button type="button" onClick={() => setCommandOpen(false)} className="rounded-lg border px-2 py-1 text-[9px]">
@@ -848,7 +891,7 @@ function DashboardOverview({
             <div className="max-h-[65vh] overflow-y-auto p-2">
               {!normalizedQuery && (
                 <p className="p-8 text-center text-xs text-zinc-500">
-                  Ketik nama rumah sakit, dokter, ID dokumen, REF atau LOT.
+                  Ketik nama rumah sakit, dokter, tindakan, REF atau LOT.
                 </p>
               )}
               {documentResults.length > 0 && (
@@ -862,7 +905,7 @@ function DashboardOverview({
                     >
                       <ClipboardSignature size={17} className="text-blue-600" />
                       <span className="min-w-0 flex-1">
-                        <b className="block truncate text-xs">{document.Hospital || document.ID}</b>
+                        <b className="block truncate text-xs">{document.Hospital || "Serah terima"}</b>
                         <span className="text-[9px] text-zinc-500">{document.Surgeon || "-"} · {document.Procedure}</span>
                       </span>
                       <DashboardStatus status={document.Status} />
@@ -979,6 +1022,7 @@ function DashboardOverview({
           stock={stock}
           history={history}
           documents={documents}
+          branchTransfers={branchTransfers}
           search={listSearch}
           onSearch={setListSearch}
           onClose={() => {
@@ -1001,6 +1045,7 @@ function DashboardDataModal({
   stock,
   history,
   documents,
+  branchTransfers,
   search,
   onSearch,
   onClose,
@@ -1010,6 +1055,7 @@ function DashboardDataModal({
   stock: StockRow[];
   history: HistoryRow[];
   documents: OnlineHandover[];
+  branchTransfers: BranchTransfer[];
   search: string;
   onSearch: (value: string) => void;
   onClose: () => void;
@@ -1043,6 +1089,22 @@ function DashboardDataModal({
         .toLowerCase()
         .includes(query)
   );
+  const transferItems = branchTransfers
+    .filter((transfer) => transfer.Status !== "DRAFT")
+    .filter(
+      (transfer) =>
+        !query ||
+        [
+          transfer.Origin,
+          transfer.Destination,
+          transfer.Sender,
+          transfer.Receiver,
+          ...transfer.Items.flatMap((item) => [item.ref, item.batch, item.description]),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+    );
   const historyAction = kind === "RETURN" ? "MOBILISASI_MASUK" : "";
   const historyItems = history.filter((entry) => {
     if (String(entry.Action).toUpperCase() !== historyAction) return false;
@@ -1058,7 +1120,7 @@ function DashboardDataModal({
   const isHistoryMovement = kind === "RETURN";
   const count =
     kind === "SUPPORT_OUT"
-      ? outstandingItems.length
+      ? (transferItems.length || outstandingItems.filter((item) => !item.location.startsWith("RS ")).length)
       : isHistoryMovement
         ? historyItems.length
         : stockItems.length;
@@ -1135,7 +1197,58 @@ function DashboardDataModal({
               </button>
             );
           })}
-          {kind === "SUPPORT_OUT" && outstandingItems.map(({ row, quantity, lastEntry, location }) => (
+          {kind === "SUPPORT_OUT" && transferItems.map((transfer) => (
+            <article
+              key={transfer.ID}
+              className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/15"
+            >
+              {(transfer.PhotoUrl || transfer.PhotoDataUrl) && (
+                <div className="relative h-40 w-full border-b border-amber-200 bg-white dark:bg-zinc-900">
+                  <Image
+                    unoptimized
+                    fill
+                    sizes="(max-width: 768px) 100vw, 720px"
+                    src={transfer.PhotoDataUrl || transfer.PhotoUrl || ""}
+                    alt={`Bukti support ${transfer.Destination}`}
+                    className="object-contain"
+                  />
+                </div>
+              )}
+              <div className="p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-black uppercase tracking-wide text-amber-700">Support luar cabang</p>
+                    <h3 className="mt-1 truncate text-sm font-black">{transfer.Destination}</h3>
+                    <p className="mt-0.5 text-[9px] text-zinc-500">{transfer.Origin} → {transfer.Destination}</p>
+                  </div>
+                  <span className={`rounded-full px-2 py-1 text-[8px] font-black ${transfer.Status === "DITERIMA" ? "bg-emerald-100 text-emerald-700" : transfer.Status === "DITERIMA_SEBAGIAN" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"}`}>
+                    {transfer.Status === "DITERIMA" ? "DI CABANG" : transfer.Status === "DITERIMA_SEBAGIAN" ? "DITERIMA SEBAGIAN" : "DIKIRIM"}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {transfer.Items.map((item, index) => (
+                    <div key={`${transfer.ID}-${item.stockRow}-${index}`} className="rounded-xl border bg-white p-2.5 dark:bg-zinc-900">
+                      <p className="line-clamp-2 text-[10px] font-black leading-4">{item.description}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold dark:bg-zinc-800">REF {item.ref || "-"}</span>
+                        <span className="rounded-md bg-amber-100 px-2 py-1 text-[8px] font-bold text-amber-800">LOT {item.batch || "-"}</span>
+                        <span className="rounded-md bg-blue-100 px-2 py-1 text-[8px] font-black text-blue-700">{item.qty} pcs</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Link href={`/mutasi-cabang?id=${encodeURIComponent(transfer.ID || "")}`} className="inline-flex h-10 items-center justify-center rounded-xl border bg-white text-[9px] font-black text-slate-700 dark:bg-zinc-900 dark:text-white">
+                    Lihat detail
+                  </Link>
+                  <Link href={`/mutasi-cabang?id=${encodeURIComponent(transfer.ID || "")}`} className="inline-flex h-10 items-center justify-center rounded-xl bg-amber-500 text-[9px] font-black text-white">
+                    Buka dokumen
+                  </Link>
+                </div>
+              </div>
+            </article>
+          ))}
+          {kind === "SUPPORT_OUT" && transferItems.length === 0 && outstandingItems.filter((item) => !item.location.startsWith("RS ")).map(({ row, quantity, lastEntry, location }) => (
             <button
               key={`outstanding-${row.No}-${row.Batch}`}
               type="button"
@@ -1223,14 +1336,18 @@ function MetricCard({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className="rounded-xl border bg-white p-2.5 text-left shadow-sm transition enabled:hover:-translate-y-0.5 enabled:hover:border-blue-200 enabled:hover:shadow-md disabled:cursor-default dark:border-zinc-800 dark:bg-zinc-900 sm:rounded-2xl sm:p-4"
+      className="min-w-[44%] snap-start rounded-xl border bg-white p-2.5 text-left shadow-sm transition enabled:hover:-translate-y-0.5 enabled:hover:border-blue-200 enabled:hover:shadow-md disabled:cursor-default dark:border-zinc-800 dark:bg-zinc-900 sm:min-w-0 sm:rounded-2xl sm:p-4"
     >
       <div className="flex items-start justify-between gap-2">
         <span className={`flex size-8 items-center justify-center rounded-lg sm:size-9 sm:rounded-xl ${tones[tone]}`}>{icon}</span>
         <span className="hidden text-[8px] font-bold text-zinc-400 sm:inline">LIVE</span>
       </div>
       <p className="mt-2 line-clamp-2 text-[9px] font-bold leading-3 text-zinc-500 sm:mt-3 sm:text-[10px]">{label}</p>
-      <p className="mt-1 text-xl font-black sm:text-2xl">{loading ? "—" : value.toLocaleString("id-ID")}</p>
+      {loading ? (
+        <span className="mt-2 block h-7 w-16 animate-pulse rounded-lg bg-slate-200 dark:bg-zinc-800" aria-label={`Memuat ${label}`} />
+      ) : (
+        <p className="mt-1 text-xl font-black sm:text-2xl">{value.toLocaleString("id-ID")}</p>
+      )}
       <p className="mt-1 hidden truncate text-[9px] text-zinc-400 sm:block">{note}</p>
     </button>
   );
@@ -1271,17 +1388,6 @@ function formatDashboardDateTime(value?: string) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Makassar",
-  }).format(date);
-}
-
-function formatRefreshTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat("id-ID", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
     timeZone: "Asia/Makassar",
   }).format(date);
 }

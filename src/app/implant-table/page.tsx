@@ -29,7 +29,8 @@ type ChangeInfo = {
   after: string | number | boolean | undefined;
 };
 
-type ChangeMap = Record<number, Partial<Record<keyof StockRow, ChangeInfo>>>;
+type StockDataField = Exclude<keyof StockRow, "Variants" | "VariantCount">;
+type ChangeMap = Record<number, Partial<Record<StockDataField, ChangeInfo>>>;
 
 /* ================= COMPONENT ================= */
 export default function StockTablePremium({
@@ -84,8 +85,8 @@ export default function StockTablePremium({
 
     await updateRow(payload);
 
-    const diff: Partial<Record<keyof StockRow, ChangeInfo>> = {};
-    (Object.keys(payload) as (keyof StockRow)[]).forEach((k) => {
+    const diff: Partial<Record<StockDataField, ChangeInfo>> = {};
+    (Object.keys(payload) as StockDataField[]).forEach((k) => {
       if (payload[k] !== before[k]) {
         diff[k] = { before: before[k], after: payload[k] };
       }
@@ -114,7 +115,7 @@ export default function StockTablePremium({
       views: [{ state: "frozen", ySplit: 1 }],
     });
 
-    const headers: (keyof StockRow)[] = [
+    const headers: StockDataField[] = [
       "NoStok",
       "Deskripsi",
       "Implant",
@@ -154,7 +155,7 @@ export default function StockTablePremium({
   };
 
   /* ================= HELPERS ================= */
-  const renderCell = (row: StockRow, field: keyof StockRow) => {
+  const renderCell = (row: StockRow, field: StockDataField) => {
     const change = changes[row.No]?.[field];
     return (
       <div className="flex items-center gap-2">
@@ -265,7 +266,7 @@ export default function StockTablePremium({
                       "TERPAKAI",
                       "REFILL",
                       "KET",
-                    ] as (keyof StockRow)[]
+                    ] as StockDataField[]
                   ).map((f) => (
                     <td key={`${r.No}-${f}`} className="px-4 py-2">
                       {renderCell(r, f)}

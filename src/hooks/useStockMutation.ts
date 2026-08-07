@@ -21,7 +21,9 @@ export function useStockMutation(
     No: number,
     qty: number,
     movementReason: "REFILL" | "MOBILISASI_MASUK",
-    note: string
+    note: string,
+    expectedRef?: string,
+    expectedBatch?: string
   ) => {
     if (!No || qty <= 0) {
       throw new Error("Invalid mutateIn payload");
@@ -35,6 +37,8 @@ export function useStockMutation(
       type: "in",
       movementReason,
       note,
+      expectedRef,
+      expectedBatch,
     });
     if (result.status === "error") {
       throw new Error(result.message || "Gagal menambah stok");
@@ -47,7 +51,9 @@ export function useStockMutation(
     No: number,
     qty: number,
     movementReason: "OPERASI" | "MOBILISASI_KELUAR",
-    note: string
+    note: string,
+    expectedRef?: string,
+    expectedBatch?: string
   ) => {
     if (!No || qty <= 0) {
       throw new Error("Invalid mutateOut payload");
@@ -61,6 +67,8 @@ export function useStockMutation(
       type: "out",
       movementReason,
       note,
+      expectedRef,
+      expectedBatch,
     });
     if (result.status === "error") {
       throw new Error(result.message || "Gagal mengurangi stok");
@@ -69,16 +77,28 @@ export function useStockMutation(
   };
 
   /* ================= DUPLICATE ================= */
-  const duplicateRow = async (No: number) => {
-    if (!No) {
+  const duplicateRow = async (
+    No: number,
+    NoStok: string,
+    Batch: string,
+    Qty: number
+  ) => {
+    if (!No || !NoStok.trim() || !Batch.trim() || Qty <= 0) {
       throw new Error("Invalid No for duplicate");
     }
 
-    return gasDuplicate({
+    const result = await gasDuplicate({
       sheet,
       ...context,
       No,
+      NoStok: NoStok.trim(),
+      Batch: Batch.trim(),
+      Qty,
     });
+    if (result.status === "error") {
+      throw new Error(result.message || "Gagal membuat varian REF/LOT");
+    }
+    return result;
   };
 
   /* ================= DELETE ================= */
