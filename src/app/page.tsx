@@ -33,6 +33,7 @@ import { listBranchTransfers } from "@/lib/branch-transfer";
 import type { OnlineHandover } from "@/types/handover";
 import type { BranchTransfer } from "@/types/branch-transfer";
 import type { StockRow } from "@/types/stock";
+import { STOCK_IMPLANT_CATEGORIES, type StockImplantCategory } from "@/lib/stockCategories";
 import { isDiscontinuedStock, isSupportCenterStock } from "@/lib/stockStatus";
 import type { HistoryRow } from "@/types/history";
 
@@ -54,12 +55,30 @@ type ScanPayload = {
   searchField?: "REF" | "LOT";
 };
 
+type ScanCreateForm = {
+  NoStok: string;
+  Deskripsi: string;
+  Implant: StockImplantCategory | "";
+  Brand: "NORMMED" | "ZIMMER" | "";
+  Batch: string;
+  Qty: number;
+  SupplySource: "OFFICE" | "SUPPORT PUSAT";
+};
+
+const EMPTY_SCAN_FORM: ScanCreateForm = {
+  NoStok: "", Deskripsi: "", Implant: "", Brand: "", Batch: "", Qty: 1, SupplySource: "OFFICE",
+};
+
 export function StockManagementPage() {
   const [scanOpen, setScanOpen] = useState(false);
   const [scanResult, setScanResult] = useState<ScanPayload | null>(null);
   const [scanStock, setScanStock] = useState<StockRow | null>(null);
   const [scanLookupLoading, setScanLookupLoading] = useState(false);
   const [scanLookupMessage, setScanLookupMessage] = useState("");
+  const [scanCatalog, setScanCatalog] = useState<StockRow[]>([]);
+  const [scanCreateOpen, setScanCreateOpen] = useState(false);
+  const [scanCreateSaving, setScanCreateSaving] = useState(false);
+  const [scanCreateForm, setScanCreateForm] = useState<ScanCreateForm>(EMPTY_SCAN_FORM);
   const [opnameRequest, setOpnameRequest] = useState(0);
 
   useEffect(() => {
@@ -80,6 +99,8 @@ export function StockManagementPage() {
     setScanResult(null);
     setScanStock(null);
     setScanLookupMessage("");
+    setScanCreateOpen(false);
+    setScanCreateForm(EMPTY_SCAN_FORM);
     setScanOpen(true);
   }, []);
 
@@ -88,12 +109,19 @@ export function StockManagementPage() {
     setScanStock(null);
     setScanLookupMessage("");
     setScanLookupLoading(true);
+    setScanCreateOpen(false);
+    setScanCreateForm({
+      ...EMPTY_SCAN_FORM,
+      NoStok: payload.ref || "",
+      Batch: payload.lot || "",
+    });
     const normalizeCode = (value: unknown) => String(value ?? "").trim().toUpperCase().replace(/\s+/g, "");
     try {
       const response = await fetch("/api/super-sheet?sheet=Sheet1", { cache: "no-store" });
       const json = await response.json();
       if (!response.ok || json.status === "error") throw new Error(json.message || "Gagal mengambil data stok");
       const rows = (Array.isArray(json.data) ? json.data : []) as StockRow[];
+      setScanCatalog(rows);
       const ref = normalizeCode(payload.ref);
       const lot = normalizeCode(payload.lot);
       const exact = rows.filter((row) =>
@@ -114,6 +142,71 @@ export function StockManagementPage() {
       setScanLookupLoading(false);
     }
   }, []);
+
+  const updateScannedDescription = useCallback((description: string) => {
+    const template = scanCatalog.find((row) => String(row.Deskripsi || "").trim().toUpperCase() === description.trim().toUpperCase());
+    setScanCreateForm((current) => ({
+      ...current,
+      Deskripsi: description,
+      Brand: template?.Brand || current.Brand,
+      Implant: template?.Implant || current.Implant,
+    }));
+  }, [scanCatalog]);
+
+  const saveScannedStock = useCallback(async () => {
+    const form = scanCreateForm;
+    if (!form.NoStok.trim()) return setScanLookupMessage("REF implant wajib diisi.");
+    if (!form.Deskripsi.trim()) return setScanLookupMessage("Nama implant wajib diisi.");
+    if (!form.Batch.trim()) return setScanLookupMessage("LOT implant wajib diisi.");
+    if (!form.Brand || !form.Implant) return setScanLookupMessage("Brand dan kategori implant wajib dipilih.");
+    const duplicate = scanCatalog.find((row) =>
+      String(row.NoStok || "").trim().toUpperCase() === form.NoStok.trim().toUpperCase() &&
+      String(row.Batch || "").trim().toUpperCase() === form.Batch.trim().toUpperCase()
+    );
+    if (duplicate) {
+      setScanStock(duplicate);
+      setScanCreateOpen(false);
+      return setScanLookupMessage("REF dan LOT sudah tersedia. Data lama ditampilkan tanpa membuat duplikat.");
+    }
+    setScanCreateSaving(true);
+    setScanLookupMessage("");
+    try {
+      const response = await fetch("/api/super-sheet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create", sheet: "Sheet1", ...form,
+          Qty: Math.max(0, Number(form.Qty || 0)), TotalQty: Math.max(0, Number(form.Qty || 0)),
+          TERPAKAI: 0, REFILL: 0,
+          KET: `Data dibuat dari scanner${scanResult?.gtin ? ` · GTIN ${scanResult.gtin}` : ""}`,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok || json.status === "error") throw new Error(json.message || "Gagal menyimpan stok");
+      const created: StockRow = {
+        No: Number(json.No || 0), NoStok: form.NoStok.trim(), Deskripsi: form.Deskripsi.trim(),
+        Implant: form.Implant, Brand: form.Brand, Batch: form.Batch.trim(), Qty: Number(form.Qty || 0),
+        TotalQty: Number(form.Qty || 0), TERPAKAI: 0, REFILL: 0,
+        KET: "Data dibuat dari scanner", SupplySource: form.SupplySource,
+      };
+      setScanStock(created);
+      setScanCatalog((rows) => [...rows, created]);
+      setScanCreateOpen(false);
+      setScanLookupMessage("Implant berhasil ditambahkan ke Stock Management.");
+      if (scanResult?.raw) {
+        void fetch("/api/super-sheet", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "barcodeAliasUpsert", sheet: "Sheet1", RawCode: scanResult.raw, Ref: created.NoStok, Lot: created.Batch }),
+        }).catch(() => undefined);
+      }
+    } catch (error) {
+      setScanLookupMessage(error instanceof Error ? error.message : "Gagal menyimpan stok");
+    } finally {
+      setScanCreateSaving(false);
+    }
+  }, [scanCatalog, scanCreateForm, scanResult]);
+
+  const scanNameOptions = useMemo(() => Array.from(new Set(scanCatalog.map((row) => String(row.Deskripsi || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "id")).slice(0, 500), [scanCatalog]);
 
   return (
     <main className="min-h-dvh bg-slate-50 text-zinc-950 dark:bg-zinc-950 dark:text-zinc-50">
@@ -227,7 +320,23 @@ export function StockManagementPage() {
                 <div className="mt-4 grid grid-cols-2 gap-2 text-sm"><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">REF</p><p className="font-black">{scanStock.NoStok || "-"}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">LOT</p><p className="font-black">{scanStock.Batch || "Belum diinput"}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">STOK OFFICE</p><p className="text-xl font-black">{Number(scanStock.TotalQty || 0)} pcs</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-[10px] font-bold text-slate-500">BRAND · KATEGORI</p><p className="font-black">{scanStock.Brand || "-"} · {scanStock.Implant || "-"}</p></div></div>
               </div>
               <div className="grid grid-cols-2 gap-2 border-t border-black/10 p-3"><button type="button" onClick={openDashboardScanner} className="h-11 rounded-xl border border-slate-300 bg-white text-sm font-bold">Scan Lagi</button><button type="button" onClick={() => setScanOpen(false)} className="h-11 rounded-xl bg-slate-950 text-sm font-bold text-white">Lihat di Tabel</button></div>
-            </div> : <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900"><p className="font-black">Stok belum ditemukan</p><p className="mt-1 text-sm">{scanLookupMessage}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" onClick={openDashboardScanner} className="h-11 rounded-xl border border-amber-400 bg-white text-sm font-bold">Scan Lagi</button><button type="button" onClick={() => setScanOpen(false)} className="h-11 rounded-xl bg-amber-600 text-sm font-bold text-white">Lihat Tabel</button></div></div>}
+            </div> : scanCreateOpen ? <div className="space-y-4 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+              <div><p className="font-black text-blue-950">Tambahkan implant baru</p><p className="mt-1 text-xs text-blue-700">LOT diambil dari barcode. Periksa REF dan sesuaikan nama implant sebelum disimpan.</p></div>
+              {scanResult?.gtin ? <div className="rounded-xl bg-white px-3 py-2 text-xs text-slate-600"><b>GTIN barcode:</b> {scanResult.gtin}</div> : null}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold text-slate-700">REF implant<input value={scanCreateForm.NoStok} onChange={(event) => setScanCreateForm((form) => ({ ...form, NoStok: event.target.value.toUpperCase() }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold outline-none focus:border-blue-500" placeholder="Contoh: NMHPLA3658" /></label>
+                <label className="text-xs font-bold text-slate-700">LOT / Batch<input value={scanCreateForm.Batch} onChange={(event) => setScanCreateForm((form) => ({ ...form, Batch: event.target.value.toUpperCase() }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold outline-none focus:border-blue-500" placeholder="Nomor LOT" /></label>
+              </div>
+              <label className="text-xs font-bold text-slate-700">Nama implant<input list="scan-implant-names" value={scanCreateForm.Deskripsi} onChange={(event) => updateScannedDescription(event.target.value)} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold outline-none focus:border-blue-500" placeholder="Ketik atau pilih nama implant serupa" /><datalist id="scan-implant-names">{scanNameOptions.map((name) => <option value={name} key={name} />)}</datalist><span className="mt-1 block text-[10px] font-normal text-slate-500">Jika memilih nama yang sudah ada, brand dan kategori akan disesuaikan otomatis.</span></label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-xs font-bold text-slate-700">Brand<select value={scanCreateForm.Brand} onChange={(event) => setScanCreateForm((form) => ({ ...form, Brand: event.target.value as ScanCreateForm["Brand"] }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold"><option value="">Pilih brand</option><option value="NORMMED">Normmed</option><option value="ZIMMER">Zimmer</option></select></label>
+                <label className="text-xs font-bold text-slate-700">Kategori<select value={scanCreateForm.Implant} onChange={(event) => setScanCreateForm((form) => ({ ...form, Implant: event.target.value as ScanCreateForm["Implant"] }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold"><option value="">Pilih kategori</option>{STOCK_IMPLANT_CATEGORIES.map((category) => <option value={category} key={category}>{category}</option>)}</select></label>
+                <label className="text-xs font-bold text-slate-700">Stok awal<input type="number" min={0} value={scanCreateForm.Qty} onChange={(event) => setScanCreateForm((form) => ({ ...form, Qty: Math.max(0, Number(event.target.value || 0)) }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold" /></label>
+                <label className="text-xs font-bold text-slate-700">Sumber stok<select value={scanCreateForm.SupplySource} onChange={(event) => setScanCreateForm((form) => ({ ...form, SupplySource: event.target.value as ScanCreateForm["SupplySource"] }))} className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm font-bold"><option value="OFFICE">Office</option><option value="SUPPORT PUSAT">Support Pusat</option></select></label>
+              </div>
+              {scanLookupMessage ? <p className="rounded-xl bg-white p-3 text-xs font-bold text-red-600">{scanLookupMessage}</p> : null}
+              <div className="grid grid-cols-2 gap-2"><button type="button" disabled={scanCreateSaving} onClick={() => setScanCreateOpen(false)} className="h-11 rounded-xl border border-slate-300 bg-white text-sm font-bold disabled:opacity-50">Kembali</button><button type="button" disabled={scanCreateSaving} onClick={() => void saveScannedStock()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-black text-white disabled:opacity-60">{scanCreateSaving ? <LoaderCircle className="animate-spin" size={17} /> : <PackagePlus size={17} />} {scanCreateSaving ? "Menyimpan..." : "Simpan Implant"}</button></div>
+            </div> : <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900"><p className="font-black">Stok belum ditemukan</p><p className="mt-1 text-sm">{scanLookupMessage}</p>{scanResult?.lot ? <p className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs"><b>LOT terbaca:</b> {scanResult.lot}</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-3"><button type="button" onClick={openDashboardScanner} className="h-11 rounded-xl border border-amber-400 bg-white text-sm font-bold">Scan Lagi</button><button type="button" onClick={() => { setScanLookupMessage(""); setScanCreateOpen(true); }} className="h-11 rounded-xl bg-blue-600 text-sm font-bold text-white">+ Tambah ke Stok</button><button type="button" onClick={() => setScanOpen(false)} className="h-11 rounded-xl bg-slate-900 text-sm font-bold text-white">Lihat Tabel</button></div></div>}
           </div>
         </section>
       </div> : null}
