@@ -123,6 +123,8 @@ function OnlineHandoverContent() {
   const [form, setForm] = useState<OnlineHandover>(() => ({
     ...emptyHandover("TKR"),
     HandoverDate: "",
+    OperationDate: "",
+    OperationTime: "",
   }));
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState("");
@@ -431,6 +433,8 @@ function OnlineHandoverContent() {
       Surgeon: form.Surgeon,
       ApprovedBy: form.ApprovedBy,
       HandoverDate: form.HandoverDate,
+      OperationDate: form.OperationDate,
+      OperationTime: form.OperationTime,
       Sender: form.Sender,
       Checker1: form.Checker1,
       Checker2: form.Checker2,
@@ -456,6 +460,8 @@ function OnlineHandoverContent() {
       Surgeon: form.Surgeon,
       ApprovedBy: form.ApprovedBy,
       HandoverDate: form.HandoverDate,
+      OperationDate: form.OperationDate,
+      OperationTime: form.OperationTime,
       Sender: form.Sender,
       Checker1: form.Checker1,
       Checker2: form.Checker2,
@@ -480,6 +486,8 @@ function OnlineHandoverContent() {
       Surgeon: form.Surgeon,
       ApprovedBy: form.ApprovedBy,
       HandoverDate: form.HandoverDate,
+      OperationDate: form.OperationDate,
+      OperationTime: form.OperationTime,
       SetName: form.SetName,
       Sender: form.Sender,
       Checker1: form.Checker1,
@@ -500,6 +508,10 @@ function OnlineHandoverContent() {
     }
     if (status === "DIKIRIM" && (!form.Hospital || !form.Sender)) {
       toast.error("Hospital dan nama pengirim wajib diisi");
+      return;
+    }
+    if (status === "DIKIRIM" && (!form.OperationDate || !form.OperationTime)) {
+      toast.error("Tanggal dan jam operasi wajib diisi agar pengingat dapat dibuat");
       return;
     }
     if (status === "DIKIRIM" && !form.SenderSignature) {
@@ -1065,7 +1077,9 @@ function OnlineHandoverContent() {
                 <TextField label="Hospital" value={form.Hospital} onChange={(Hospital) => setForm({ ...form, Hospital })} />
                 <TextField label="Surgeon / Dokter" value={form.Surgeon} onChange={(Surgeon) => setForm({ ...form, Surgeon })} />
                 <TextField label="Approved by" value={form.ApprovedBy} onChange={(ApprovedBy) => setForm({ ...form, ApprovedBy })} />
-                <TextField label="Tanggal" type="date" value={form.HandoverDate} onChange={(HandoverDate) => setForm({ ...form, HandoverDate })} />
+                <TextField label="Tanggal serah terima" type="date" value={form.HandoverDate} onChange={(HandoverDate) => setForm({ ...form, HandoverDate, OperationDate: form.OperationDate || HandoverDate })} />
+                <TextField label="Tanggal operasi" type="date" value={form.OperationDate || ""} onChange={(OperationDate) => setForm({ ...form, OperationDate })} />
+                <TextField label="Jam operasi" type="time" value={form.OperationTime || ""} onChange={(OperationTime) => setForm({ ...form, OperationTime })} />
                 <TextField label="Set / Box" value={form.SetName} onChange={(SetName) => setForm({ ...form, SetName })} />
                 <div className="rounded-xl border bg-slate-50 px-3 py-2 dark:bg-zinc-800">
                   <p className="text-[10px] font-bold text-zinc-500">Kelompok data</p>
@@ -1351,6 +1365,7 @@ function OnlineHandoverContent() {
                 <ReviewValue label="Dokter" value={form.Surgeon || "Belum diisi"} warning={!form.Surgeon} />
                 <ReviewValue label="Tindakan" value={`${form.Procedure} · ${normalizeBrand(form.Brand)}`} />
                 <ReviewValue label="Tanggal" value={form.HandoverDate || "Belum diisi"} warning={!form.HandoverDate} />
+                <ReviewValue label="Jadwal operasi" value={form.OperationDate && form.OperationTime ? `${form.OperationDate} · ${form.OperationTime}` : "Belum dijadwalkan"} warning={!form.OperationDate || !form.OperationTime} />
                 <ReviewValue label="Implant dikirim" value={`${selectedItems.length} item · ${issuedTotal} pcs`} warning={!selectedItems.length} />
                 <ReviewValue label="Instrumen" value={`${form.Instruments.filter((item) => item.selected).length} item`} />
                 <ReviewValue label="Pengirim" value={form.Sender || "Belum diisi"} warning={!form.Sender} />
@@ -1901,6 +1916,8 @@ function normalizeHandoverDocument(document: OnlineHandover): OnlineHandover {
     BearingOption:
       document.BearingOption || defaultBearingOption(document.Procedure, brand),
     HandoverDate: normalizeDateInput(document.HandoverDate),
+    OperationDate: normalizeDateInput(document.OperationDate || document.HandoverDate),
+    OperationTime: document.OperationTime || "",
   };
 }
 
@@ -3183,7 +3200,8 @@ function readLocalHandoverDraft(): OnlineHandover | null {
 
 function emptyHandover(procedure: HandoverProcedure, brand: HandoverBrand = "NORMMED", bearingOption: HandoverBearingOption = defaultBearingOption(procedure, brand)): OnlineHandover {
   const kneeProcedure = procedure === "TKR" || procedure === "TKR VANGUARD" || procedure === "TKR PERSONA" || procedure === "UKA";
-  return { Procedure: procedure, Brand: brand, BearingOption: bearingOption, Hospital: "", Surgeon: "", ApprovedBy: "", HandoverDate: new Date().toISOString().slice(0, 10), SetName: kneeProcedure ? "BOX – 1" : "", Items: [], Instruments: defaultInstruments(procedure, brand), Sender: "", Checker1: "", Checker2: "", AcknowledgedBy: "", Receiver: "", Status: "DRAFT", AcceptanceNote: "", SenderSignature: "", ReceiverSignature: "" };
+  const today = new Date().toISOString().slice(0, 10);
+  return { Procedure: procedure, Brand: brand, BearingOption: bearingOption, Hospital: "", Surgeon: "", ApprovedBy: "", HandoverDate: today, OperationDate: today, OperationTime: "", SetName: kneeProcedure ? "BOX – 1" : "", Items: [], Instruments: defaultInstruments(procedure, brand), Sender: "", Checker1: "", Checker2: "", AcknowledgedBy: "", Receiver: "", Status: "DRAFT", AcceptanceNote: "", SenderSignature: "", ReceiverSignature: "" };
 }
 
 function buildHandoverFromStock(procedure: HandoverProcedure, brand: HandoverBrand, rows: StockRow[], bearingOption: HandoverBearingOption = defaultBearingOption(procedure, brand)) {

@@ -102,6 +102,8 @@ export async function printHandoverDocument(
       <div><b>Brand</b>: ${escapeHtml(handover.Brand)}</div>
       <div><b>Bearing</b>: ${escapeHtml(handover.BearingOption || "-")}</div>
       <div><b>Tanggal</b>: ${escapeHtml(handover.HandoverDate || "-")}</div>
+      <div><b>Jadwal Operasi</b>: ${escapeHtml(`${handover.OperationDate || handover.HandoverDate || "-"}${handover.OperationTime ? ` · ${handover.OperationTime}` : ""}`)}</div>
+      ${handover.ProcedureCompletedAt ? `<div><b>Tindakan Selesai</b>: ${escapeHtml(dateTime(handover.ProcedureCompletedAt))}</div><div><b>Catatan Selesai</b>: ${escapeHtml(handover.CompletionNote || "-")}</div>` : ""}
       <div><b>Set / Box</b>: ${escapeHtml(handover.SetName || "-")}</div>
     </section>
     <h2>DAFTAR IMPLANT <span class="section-count">${items.length} item</span></h2>

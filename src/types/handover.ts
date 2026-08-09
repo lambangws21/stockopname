@@ -63,6 +63,10 @@ export interface OnlineHandover {
   Surgeon: string;
   ApprovedBy: string;
   HandoverDate: string;
+  OperationDate?: string;
+  OperationTime?: string;
+  ProcedureCompletedAt?: string;
+  CompletionNote?: string;
   SetName: string;
   Items: HandoverItem[];
   Instruments: HandoverInstrument[];

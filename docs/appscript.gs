@@ -129,6 +129,10 @@ const HANDOVER_HEADERS = [
   "BearingOption",
   "PhotoUrl",
   "PhotoFileId",
+  "OperationDate",
+  "OperationTime",
+  "ProcedureCompletedAt",
+  "CompletionNote",
 ];
 const BRANCH_TRANSFER_HEADERS = [
   "ID",
@@ -1150,6 +1154,10 @@ function saveHandover(payload, skipLock) {
     payload.BearingOption || previous[29] || "",
     photoUrl,
     photoFileId,
+    payload.OperationDate || previous[32] || payload.HandoverDate || "",
+    payload.OperationTime || previous[33] || "",
+    payload.ProcedureCompletedAt || previous[34] || "",
+    payload.CompletionNote || previous[35] || "",
   ];
   if (rowNumber) {
     sheet.getRange(rowNumber, 1, 1, HANDOVER_HEADERS.length).setValues([values]);
@@ -1501,6 +1509,16 @@ function settleHandoverInventory(payload) {
       }
       const usedDelta = nextUsed - previousUsed;
       const returnedDelta = nextReturned - previousReturned;
+      const confirmedLot = String(item.batch || "").trim().toUpperCase();
+      if (
+        usedDelta > 0 &&
+        (!confirmedLot || confirmedLot === "-" || confirmedLot === "N/A" || confirmedLot === "BELUM DIINPUT")
+      ) {
+        throw new Error(
+          "LOT implant " + String(item.partNumber || item.description || "-") +
+          " belum diisi. Cocokkan LOT fisik sebelum mencatat pemakaian."
+        );
+      }
       const stockRow = safeNumber(item.stockRow);
       const supplySource = normalizeSupplySource(item.supplySource);
       const movementNote =
@@ -1604,6 +1622,8 @@ function settleHandoverInventory(payload) {
     }
     current.Items = updatedItems;
     current.HospitalUpdatedAt = new Date();
+    current.ProcedureCompletedAt = new Date();
+    current.CompletionNote = String(payload.completionNote || current.CompletionNote || "Tindakan selesai");
     current.By = payload.by || current.Receiver || current.By || "";
     current._allowPostedItems = true;
     return saveHandover(current, true);

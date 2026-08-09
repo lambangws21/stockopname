@@ -138,6 +138,10 @@ const emptyForm: CustomerFormData = {
 
 const orthopedicCaseOptions = ["Artroplasty HIP", "Artroplasty KNEE", "Artroscopy", "Trauma", "Nailing"];
 
+function normalizeCustomerText(value: unknown) {
+  return String(value ?? "").trim().toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function potentialPriority(monthlyCaseCount: string | number, caseTypes: string): "HIGH" | "MEDIUM" | "LOW" {
   const count = Number(monthlyCaseCount) || 0;
   const normalizedCases = caseTypes.toLowerCase();
@@ -383,12 +387,26 @@ function CustomerMappingDashboard() {
       if (kind === "EXISTING" && !isExistingCustomer(row)) return false;
       if (kind === "TARGET" && isExistingCustomer(row)) return false;
       if (!needle) return true;
-      return [row.doctor, row.hospital, row.territory, row.owner, row.note]
+      return [
+        row.doctor,
+        row.hospital,
+        row.practiceHospital2,
+        row.practiceHospital3,
+        row.territory,
+        row.owner,
+        row.phone,
+        row.specialty,
+        row.implantUsed,
+        row.productOffered,
+        row.note,
+      ]
         .join(" ")
         .toLowerCase()
         .includes(needle);
     });
   }, [kind, query, rows, status]);
+
+  const hospitalRelationCount = useMemo(() => rows.reduce((total, row) => total + [row.hospital, row.practiceHospital2, row.practiceHospital3].filter((hospital, index, hospitals) => hospital && hospitals.findIndex((item) => normalizeCustomerText(item) === normalizeCustomerText(hospital)) === index).length, 0), [rows]);
 
   const selectedDoctor = useMemo(
     () => rows.find((row) => row.id === selectedId) || rows[0] || null,
@@ -1053,15 +1071,18 @@ function CustomerMappingDashboard() {
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
-            <label className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Cari dokter, rumah sakit, territory, atau owner..."
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm outline-none focus:border-blue-400 focus:bg-white"
-              />
+          <div className="grid gap-3 lg:grid-cols-[minmax(320px,1fr)_auto_auto] lg:items-end">
+            <label>
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cari customer</span>
+              <span className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Cari dokter, seluruh RS, territory, atau owner..."
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm outline-none focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                />
+              </span>
             </label>
             <FilterGroup
               value={kind}
@@ -1080,7 +1101,7 @@ function CustomerMappingDashboard() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div>
               <h2 className="font-semibold">Customer pipeline</h2>
-              <p className="text-xs text-slate-500">{filteredRows.length} data ditampilkan</p>
+              <p className="text-xs text-slate-500">{filteredRows.length} dari {rows.length} dokter · {hospitalRelationCount} relasi rumah sakit</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
@@ -1504,13 +1525,25 @@ function DashboardBlock({ title, description, icon: Icon, children, className = 
 }
 
 function FilterGroup({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) {
+  const label = options.includes("EXISTING") ? "Jenis customer" : "Status customer";
   return (
-    <div className="flex h-11 items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1">
-      {options.map((option) => (
-        <button key={option} type="button" onClick={() => onChange(option)} className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition ${value === option ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>
-          {option === "ALL" ? "Semua" : statusLabel[option as CustomerStatus] || option}
-        </button>
-      ))}
+    <div className="min-w-0">
+      <label className="block sm:hidden">
+        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+        <select value={value} onChange={(event) => onChange(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 outline-none focus:border-blue-400 focus:bg-white focus:ring-2 focus:ring-blue-100">
+          {options.map((option) => <option value={option} key={option}>{option === "ALL" ? "Semua" : statusLabel[option as CustomerStatus] || option}</option>)}
+        </select>
+      </label>
+      <div className="hidden sm:block">
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+        <div className="flex h-11 items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-1">
+          {options.map((option) => (
+            <button key={option} type="button" onClick={() => onChange(option)} className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition ${value === option ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>
+              {option === "ALL" ? "Semua" : statusLabel[option as CustomerStatus] || option}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

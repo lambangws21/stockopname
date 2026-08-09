@@ -9,12 +9,15 @@ import {
 } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   ArrowLeft,
+  Bell,
   CheckCircle2,
   ChevronDown,
   Hospital,
   LayoutGrid,
   LoaderCircle,
+  MessageCircle,
   PackageCheck,
   Search,
   Table2,
@@ -38,6 +41,13 @@ export default function HospitalStockPage() {
   const [usedKeys, setUsedKeys] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
   const [visibleCount, setVisibleCount] = useState(20);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [lotConfirmed, setLotConfirmed] = useState(false);
+  const [completionNote, setCompletionNote] = useState("");
+  const [clockNow, setClockNow] = useState(0);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
+  const [isIphone, setIsIphone] = useState(false);
+  const [isStandalonePwa, setIsStandalonePwa] = useState(false);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -57,6 +67,17 @@ export default function HospitalStockPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    setClockNow(Date.now());
+    const iphone = /iPhone/i.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+    setIsIphone(iphone);
+    setIsStandalonePwa(standalone);
+    if (iphone && typeof Notification !== "undefined") setNotificationPermission(Notification.permission);
+    const timer = window.setInterval(() => setClockNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const documentsWithStock = useMemo(
     () =>
       documents.filter(
@@ -66,6 +87,38 @@ export default function HospitalStockPage() {
       ),
     [documents]
   );
+
+  const dueProcedures = useMemo(() => documentsWithStock.filter((document) => {
+    if (document.Status !== "DITERIMA" || document.ProcedureCompletedAt) return false;
+    const scheduledAt = operationTimestamp(document);
+    return Boolean(clockNow && scheduledAt && scheduledAt <= clockNow);
+  }), [clockNow, documentsWithStock]);
+
+  useEffect(() => {
+    if (!isIphone || !isStandalonePwa || !dueProcedures.length || notificationPermission !== "granted") return;
+    dueProcedures.forEach((document) => {
+      const notificationKey = `operation-reminder-${document.ID || document.Hospital}`;
+      if (localStorage.getItem(notificationKey)) return;
+      void navigator.serviceWorker.ready.then((registration) => registration.showNotification("Tindakan operasi perlu diselesaikan", {
+        body: `${document.Hospital || "Rumah sakit"} · ${document.Procedure} · ${document.Surgeon || "Dokter belum diisi"}`,
+        icon: "/favicon.ico",
+        tag: notificationKey,
+        data: { url: `/rumah-sakit?document=${encodeURIComponent(document.ID || "")}` },
+      })).then(() => localStorage.setItem(notificationKey, new Date().toISOString())).catch(() => undefined);
+    });
+  }, [dueProcedures, isIphone, isStandalonePwa, notificationPermission]);
+
+  async function enableNotifications() {
+    if (!isIphone) return toast.error("Notifikasi perangkat dibatasi khusus iPhone");
+    if (!isStandalonePwa) return toast.error("Tambahkan NEX Stock ke Home Screen iPhone terlebih dahulu");
+    if (typeof Notification === "undefined") return toast.error("Browser ini tidak mendukung notifikasi");
+    if (!("serviceWorker" in navigator)) return toast.error("Service worker tidak tersedia pada browser ini");
+    await navigator.serviceWorker.register("/sw.js");
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === "granted") toast.success("Notifikasi jadwal operasi berhasil diaktifkan");
+    else toast.error("Izin notifikasi belum diberikan");
+  }
 
   const hospitalNames = useMemo(
     () =>
@@ -156,6 +209,39 @@ export default function HospitalStockPage() {
     visibleItems.length > 0 &&
     selectedVisibleCount === visibleItems.length;
 
+  const procedurePlan = useMemo(() => {
+    if (!selectedDocument) return null;
+    const selectedSet = new Set(usedKeys);
+    const active = selectedDocument.Items.map((item, itemIndex) => ({ item, itemIndex })).filter(({ item }) => getRemaining(item) > 0);
+    const selectedCement = active.find(({ item, itemIndex }) => isBoneCement(item) && selectedSet.has(itemKey(selectedDocument.ID, itemIndex)));
+    const cement = selectedCement || active.find(({ item }) => isBoneCement(item));
+    const used = active.flatMap(({ item, itemIndex }) => {
+      const remaining = getRemaining(item);
+      const isAutomaticCement = cement?.itemIndex === itemIndex;
+      const quantity = isAutomaticCement ? Math.min(1, remaining) : !isBoneCement(item) && selectedSet.has(itemKey(selectedDocument.ID, itemIndex)) ? remaining : 0;
+      return quantity > 0 ? [{ item, itemIndex, quantity, automatic: isAutomaticCement }] : [];
+    });
+    const usedByIndex = new Map(used.map((entry) => [entry.itemIndex, entry.quantity]));
+    const items = selectedDocument.Items.map((item, itemIndex) => {
+      const remaining = getRemaining(item);
+      if (remaining <= 0) return item;
+      const usedQuantity = usedByIndex.get(itemIndex) || 0;
+      return {
+        ...item,
+        usedQty: Number(item.usedQty || 0) + usedQuantity,
+        returnedQty: Number(item.returnedQty || 0) + Math.max(0, remaining - usedQuantity),
+      };
+    });
+    return {
+      cement,
+      used,
+      items,
+      usedPieces: used.reduce((sum, entry) => sum + entry.quantity, 0),
+      returnPieces: active.reduce((sum, { item }) => sum + getRemaining(item), 0) - used.reduce((sum, entry) => sum + entry.quantity, 0),
+      missingLots: used.filter(({ item }) => !hasValidLot(item.batch)),
+    };
+  }, [selectedDocument, usedKeys]);
+
   function chooseDocument(nextId: string) {
     setDocumentId(nextId);
     setUsedKeys([]);
@@ -195,34 +281,31 @@ export default function HospitalStockPage() {
     });
   }
 
-  async function completeProcedure() {
+  function requestCompleteProcedure() {
     if (!selectedDocument?.ID) return;
     if (selectedDocument.Status !== "DITERIMA") {
       toast.error("Dokumen harus diterima sebelum tindakan diselesaikan");
       return;
     }
+    if (selectedUsedCount === 0) return toast.error("Centang minimal satu implant yang terpakai");
+    if (!procedurePlan?.cement) return toast.error("Bone Cement tidak ditemukan pada stock RS. Tambahkan Bone Cement sebelum menyelesaikan tindakan.");
+    if (procedurePlan.missingLots.length > 0) return toast.error(`LOT belum lengkap pada ${procedurePlan.missingLots.length} implant terpakai`);
+    setLotConfirmed(false);
+    setCompletionNote("Tindakan selesai, pemakaian implant dan LOT telah dikonfirmasi.");
+    setConfirmOpen(true);
+  }
 
-    const selectedSet = new Set(usedKeys);
-    const Items = selectedDocument.Items.map((item, itemIndex) => {
-      const remaining = getRemaining(item);
-      if (remaining <= 0) return item;
-      return selectedSet.has(itemKey(selectedDocument.ID, itemIndex))
-        ? {
-            ...item,
-            usedQty: Number(item.usedQty || 0) + remaining,
-          }
-        : {
-            ...item,
-            returnedQty: Number(item.returnedQty || 0) + remaining,
-          };
-    });
+  async function completeProcedure() {
+    if (!selectedDocument?.ID || !procedurePlan || !lotConfirmed) return;
+    if (!completionNote.trim()) return toast.error("Catatan tindakan selesai wajib diisi");
 
     setSaving(true);
     try {
       const result = await settleOnlineHandover({
         ID: selectedDocument.ID,
-        Items,
+        Items: procedurePlan.items,
         by: selectedDocument.Receiver || "Rumah Sakit",
+        completionNote: completionNote.trim(),
       });
       if (result.data) {
         const updatedDocument = result.data;
@@ -245,8 +328,9 @@ export default function HospitalStockPage() {
       setDocumentId("");
       setSearch("");
       toast.success(
-        `${selectedUsedCount} implant terpakai · ${automaticReturnCount} implant kembali ke office`
+        `${procedurePlan.usedPieces} pcs terpakai · ${procedurePlan.returnPieces} pcs kembali ke office`
       );
+      setConfirmOpen(false);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Tindakan gagal diselesaikan"
@@ -289,6 +373,7 @@ export default function HospitalStockPage() {
       </header>
 
       <div className="mx-auto max-w-6xl space-y-3 p-3 sm:p-6">
+        {dueProcedures.length > 0 ? <section className="rounded-2xl border border-amber-300 bg-amber-50 p-3 shadow-sm dark:border-amber-800 dark:bg-amber-950/20"><div className="flex items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-500 text-white"><Bell size={18} /></span><div className="min-w-0 flex-1"><p className="text-sm font-black text-amber-950 dark:text-amber-100">{dueProcedures.length} tindakan perlu diselesaikan</p><p className="mt-1 text-[10px] leading-4 text-amber-800 dark:text-amber-300">{dueProcedures.slice(0, 2).map((document) => `${document.Hospital} · ${document.Procedure} · ${document.OperationTime || "jam belum diisi"}`).join(" • ")}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => { const first = dueProcedures[0]; setHospitalFilter(String(first.Hospital || "ALL")); setDocumentId(first.ID || ""); }} className="rounded-lg bg-amber-600 px-3 py-2 text-[10px] font-black text-white">Buka tindakan</button>{isIphone && notificationPermission !== "granted" ? <button type="button" onClick={() => void enableNotifications()} className="rounded-lg border border-amber-400 bg-white px-3 py-2 text-[10px] font-black text-amber-800">Aktifkan notifikasi iPhone</button> : null}<button type="button" onClick={() => { const document = dueProcedures[0]; window.open(`https://wa.me/?text=${encodeURIComponent(`Pengingat penyelesaian tindakan operasi\nRS: ${document.Hospital}\nDokter: ${document.Surgeon}\nTindakan: ${document.Procedure}\nJadwal: ${document.OperationDate || document.HandoverDate} ${document.OperationTime || ""}\nMohon catat implant terpakai dan konfirmasi LOT.`)}`, "_blank", "noopener,noreferrer"); }} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-black text-white"><MessageCircle size={13} /> Bagikan WA</button></div></div></div></section> : isIphone && notificationPermission !== "granted" ? <button type="button" onClick={() => void enableNotifications()} className="flex w-full items-center gap-3 rounded-2xl border bg-white p-3 text-left shadow-sm dark:bg-zinc-900"><span className="grid size-9 place-items-center rounded-xl bg-blue-50 text-blue-600"><Bell size={16} /></span><span><b className="block text-xs">Aktifkan pengingat di iPhone</b><span className="text-[9px] text-zinc-500">{isStandalonePwa ? "Izinkan notifikasi jadwal operasi" : "Tambahkan aplikasi ke Home Screen terlebih dahulu"}</span></span></button> : null}
         <section className="rounded-2xl border bg-white p-3 shadow-sm dark:bg-zinc-900">
           <p className="text-[10px] font-black uppercase text-zinc-500">
             1. Pilih tindakan
@@ -502,7 +587,7 @@ export default function HospitalStockPage() {
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => void completeProcedure()}
+                onClick={requestCompleteProcedure}
                 className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-black text-white disabled:opacity-50"
               >
                 {saving ? (
@@ -523,6 +608,21 @@ export default function HospitalStockPage() {
           </div>
         </div>
       )}
+
+      {confirmOpen && selectedDocument && procedurePlan ? <div className="fixed inset-0 z-[120] flex items-end bg-slate-950/65 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Konfirmasi implant terpakai">
+        <button type="button" className="absolute inset-0" onClick={() => !saving && setConfirmOpen(false)} aria-label="Tutup konfirmasi" />
+        <section className="relative z-10 flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-w-xl sm:rounded-3xl">
+          <header className="border-b px-4 py-4"><div className="flex items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-red-50 text-red-600"><PackageCheck size={19} /></span><div className="min-w-0"><p className="font-black">Konfirmasi Implant Terpakai</p><p className="mt-0.5 text-[10px] text-zinc-500">{selectedDocument.Hospital} · {selectedDocument.Procedure} · dr. {selectedDocument.Surgeon || "-"}</p></div></div></header>
+          <div className="overflow-y-auto p-4">
+            <div className="grid grid-cols-2 gap-2"><Metric label="Terpakai" value={procedurePlan.usedPieces} tone="red" /><Metric label="Auto Return" value={procedurePlan.returnPieces} tone="emerald" /></div>
+            <div className="mt-4 space-y-2">{procedurePlan.used.map(({ item, itemIndex, quantity, automatic }) => <article key={`confirm-${item.partNumber}-${item.batch}-${itemIndex}`} className={`rounded-xl border p-3 ${automatic ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20" : "border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/10"}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-xs font-black leading-4">{item.description}</p><div className="mt-2 flex flex-wrap gap-1"><span className="rounded-md bg-white px-2 py-1 text-[9px] font-black text-blue-700">REF {item.partNumber || "-"}</span><span className="rounded-md bg-white px-2 py-1 text-[9px] font-black text-slate-700">LOT {item.batch}</span>{automatic ? <span className="rounded-md bg-amber-500 px-2 py-1 text-[9px] font-black text-white">BONE CEMENT OTOMATIS</span> : null}</div></div><b className="shrink-0 rounded-lg bg-red-600 px-2.5 py-1.5 text-xs text-white">{quantity} pcs</b></div></article>)}</div>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border-2 border-blue-200 bg-blue-50 p-3 text-blue-950"><input type="checkbox" checked={lotConfirmed} onChange={(event) => setLotConfirmed(event.target.checked)} className="mt-0.5 size-5 shrink-0 accent-blue-600" /><span><b className="block text-xs">Saya sudah mencocokkan REF dan LOT fisik</b><span className="mt-1 block text-[10px] leading-4 text-blue-700">Pastikan nomor LOT pada box sama dengan ringkasan di atas. Setelah dikonfirmasi, implant lain otomatis kembali ke office.</span></span></label>
+            <label className="mt-3 block text-[10px] font-black text-zinc-600">Catatan tindakan selesai<textarea value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} rows={3} placeholder="Contoh: Tindakan selesai, implant dan LOT sudah sesuai." className="mt-1.5 w-full resize-none rounded-xl border bg-transparent p-3 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+            <div className="mt-3 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[10px] leading-4 text-amber-800"><AlertTriangle size={15} className="mt-0.5 shrink-0" /> Bone Cement otomatis dicatat tepat 1 pcs. Sisa Bone Cement dan implant yang tidak dipilih akan dikembalikan ke office.</div>
+          </div>
+          <footer className="grid grid-cols-2 gap-2 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"><button type="button" disabled={saving} onClick={() => setConfirmOpen(false)} className="h-12 rounded-xl border text-sm font-bold disabled:opacity-50">Periksa Lagi</button><button type="button" disabled={saving || !lotConfirmed || !completionNote.trim()} onClick={() => void completeProcedure()} className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-black text-white disabled:opacity-40">{saving ? <LoaderCircle size={17} className="animate-spin" /> : <CheckCircle2 size={17} />} Konfirmasi & Simpan</button></footer>
+        </section>
+      </div> : null}
     </main>
   );
 }
@@ -774,4 +874,22 @@ function getRemaining(item: HandoverItem) {
       Number(item.usedQty || 0) -
       Number(item.returnedQty || 0)
   );
+}
+
+function isBoneCement(item: HandoverItem) {
+  const text = `${item.partNumber || ""} ${item.description || ""}`.toUpperCase();
+  return text.includes("BONE CEMENT") || text.includes("REFOBACIN");
+}
+
+function hasValidLot(value: unknown) {
+  const lot = String(value ?? "").trim().toUpperCase();
+  return Boolean(lot && lot !== "-" && lot !== "N/A" && lot !== "BELUM DIINPUT");
+}
+
+function operationTimestamp(document: OnlineHandover) {
+  const date = String(document.OperationDate || document.HandoverDate || "").trim();
+  const time = String(document.OperationTime || "").trim();
+  if (!date || !time) return 0;
+  const timestamp = new Date(`${date}T${time}:00`).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }

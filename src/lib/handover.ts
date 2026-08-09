@@ -50,7 +50,7 @@ export async function saveOnlineHandover(
 }
 
 export async function settleOnlineHandover(
-  handover: Pick<OnlineHandover, "ID" | "Items"> & { by?: string }
+  handover: Pick<OnlineHandover, "ID" | "Items"> & { by?: string; completionNote?: string }
 ) {
   const response = await fetch(API, {
     method: "POST",
