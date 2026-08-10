@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   Building2,
@@ -30,7 +31,8 @@ interface MutateModalProps {
   sheet: string;
   context?: GasSheetContext;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (result?: { rowNo: number; reason: MovementReason }) => void | Promise<void>;
+  onUpdateIdentity?: (row: StockRow) => void | Promise<void>;
 }
 
 const ACTIONS: Array<{
@@ -78,6 +80,7 @@ export default function MutateModal({
   context,
   onClose,
   onSuccess,
+  onUpdateIdentity,
 }: MutateModalProps) {
   const { mutateIn, mutateOut } = useStockMutation(sheet, context);
   const [selectedReason, setSelectedReason] =
@@ -93,13 +96,31 @@ export default function MutateModal({
   const [selectedRowNo, setSelectedRowNo] = useState(0);
   const [identityEditorOpen, setIdentityEditorOpen] = useState(false);
   const [identitySearch, setIdentitySearch] = useState("");
+  const [editedRef, setEditedRef] = useState("");
+  const [editedLot, setEditedLot] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [successResult, setSuccessResult] = useState<{
+    rowNo: number;
+    reason: MovementReason;
+  } | null>(null);
+  const hydratedIdentityNoRef = useRef<number | null>(null);
+  const initialRowRef = useRef(initialRow);
+  initialRowRef.current = initialRow;
+  const initialRowNo = initialRow?.No ?? 0;
 
   useEffect(() => {
-    if (!open || !initialRow) return;
-    setSelectedRowNo(initialRow.No);
+    if (!open || !initialRowNo) return;
+    hydratedIdentityNoRef.current = null;
+    setSelectedRowNo(initialRowNo);
+    setEditedRef(String(initialRowRef.current?.NoStok || ""));
+    setEditedLot(String(initialRowRef.current?.Batch || ""));
     setIdentityEditorOpen(false);
     setIdentitySearch("");
-  }, [initialRow, open]);
+    setConfirmOpen(false);
+    setSuccessOpen(false);
+    setSuccessResult(null);
+  }, [initialRowNo, open]);
 
   const activeRow =
     variants.find((item) => item.No === selectedRowNo) || initialRow;
@@ -134,6 +155,14 @@ export default function MutateModal({
         .includes(query)
     );
   }, [identitySearch, matchingVariants]);
+
+  useEffect(() => {
+    if (!activeRow) return;
+    if (hydratedIdentityNoRef.current === activeRow.No) return;
+    hydratedIdentityNoRef.current = activeRow.No;
+    setEditedRef(String(activeRow.NoStok || ""));
+    setEditedLot(String(activeRow.Batch || ""));
+  }, [activeRow]);
 
   if (!open || !activeRow) return null;
   const row = activeRow;
@@ -172,6 +201,23 @@ export default function MutateModal({
     setQty(1);
     setNote("");
     setErrMsg(null);
+  };
+
+  const requestConfirmation = () => {
+    if (!selectedReason) return;
+    if (qty <= 0) return setErrMsg("Jumlah minimal 1");
+    if (!isStockIn && changesOfficeStock && qty > row.TotalQty) {
+      return setErrMsg("Jumlah melebihi stok yang tersedia");
+    }
+    if (!editedRef.trim()) return setErrMsg("Nomor REF wajib diisi");
+    if (selectedReason === "OPERASI" && (!doctor.trim() || !operationDate || !procedure || !hospital.trim())) {
+      return setErrMsg("Dokter, tanggal, jenis tindakan, dan rumah sakit wajib diisi");
+    }
+    if (selectedReason.includes("MOBILISASI") && !note.trim()) {
+      return setErrMsg("Tuliskan nama cabang tujuan atau asal");
+    }
+    setErrMsg(null);
+    setConfirmOpen(true);
   };
 
   const submit = async () => {
@@ -221,14 +267,19 @@ export default function MutateModal({
     setErrMsg(null);
 
     try {
+      const cleanRef = editedRef.trim().toUpperCase();
+      const cleanLot = editedLot.trim().toUpperCase();
+      if (cleanRef !== String(row.NoStok || "") || cleanLot !== String(row.Batch || "")) {
+        await onUpdateIdentity?.({ ...row, NoStok: cleanRef, Batch: cleanLot });
+      }
       if (isStockIn) {
         await mutateIn(
           row.No,
           qty,
           selectedReason as "REFILL" | "MOBILISASI_MASUK",
           safeNote,
-          row.NoStok,
-          row.Batch
+          cleanRef,
+          cleanLot
         );
       } else {
         await mutateOut(
@@ -236,13 +287,14 @@ export default function MutateModal({
           qty,
           selectedReason as "OPERASI" | "MOBILISASI_KELUAR",
           safeNote,
-          row.NoStok,
-          row.Batch
+          cleanRef,
+          cleanLot
         );
       }
 
-      await onSuccess();
-      close();
+      setConfirmOpen(false);
+      setSuccessResult({ rowNo: row.No, reason: selectedReason });
+      setSuccessOpen(true);
     } catch (error) {
       setErrMsg(
         error instanceof Error ? error.message : "Pergerakan stok gagal"
@@ -253,7 +305,7 @@ export default function MutateModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
       {loading && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20">
           <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold shadow-xl dark:bg-zinc-900">
@@ -262,7 +314,7 @@ export default function MutateModal({
           </div>
         </div>
       )}
-      <div className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:max-w-lg sm:rounded-3xl sm:pb-0">
+      <motion.div initial={{ opacity: 0, y: 34, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:max-w-lg sm:rounded-3xl sm:pb-0">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-zinc-900/95">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-blue-600">
@@ -328,6 +380,19 @@ export default function MutateModal({
                   placeholder="Cari REF, LOT, ukuran, atau nama..."
                   className="h-10 w-full rounded-xl border bg-white px-3 text-xs outline-none focus:border-blue-500 dark:bg-zinc-900"
                 />
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[9px] font-black uppercase text-zinc-500">
+                    Nomor REF
+                    <input value={editedRef} onChange={(event) => setEditedRef(event.target.value)} className="mt-1 h-10 w-full rounded-xl border bg-white px-3 text-xs font-bold uppercase outline-none focus:border-blue-500 dark:bg-zinc-900" />
+                  </label>
+                  <label className="text-[9px] font-black uppercase text-zinc-500">
+                    LOT / Batch
+                    <div className="relative mt-1">
+                      <input value={editedLot} onChange={(event) => setEditedLot(event.target.value)} placeholder="Boleh dikosongkan" className="h-10 w-full rounded-xl border bg-white pl-3 pr-9 text-xs font-bold uppercase outline-none focus:border-blue-500 dark:bg-zinc-900" />
+                      {editedLot && <button type="button" onClick={() => setEditedLot("")} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600" aria-label="Hapus LOT"><X size={14} /></button>}
+                    </div>
+                  </label>
+                </div>
                 <div className="max-h-52 space-y-2 overflow-y-auto">
                   {visibleIdentityVariants.map((variant) => {
                     const selected = variant.No === row.No;
@@ -336,7 +401,10 @@ export default function MutateModal({
                         key={`${variant.No}-${variant.NoStok}-${variant.Batch}`}
                         type="button"
                         onClick={() => {
+                          hydratedIdentityNoRef.current = variant.No;
                           setSelectedRowNo(variant.No);
+                          setEditedRef(String(variant.NoStok || ""));
+                          setEditedLot(String(variant.Batch || ""));
                           setIdentityEditorOpen(false);
                           setIdentitySearch("");
                           setQty(1);
@@ -403,8 +471,8 @@ export default function MutateModal({
                   {selectedAction?.description}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1.5 border-t border-current/15 pt-2.5 text-[9px] font-black">
-                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">REF {row.NoStok || "-"}</span>
-                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">LOT {row.Batch || "-"}</span>
+                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">REF {editedRef || "-"}</span>
+                  <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">LOT {editedLot || "-"}</span>
                 </div>
               </div>
 
@@ -560,7 +628,7 @@ export default function MutateModal({
 
               <button
                 type="button"
-                onClick={submit}
+                onClick={requestConfirmation}
                 disabled={loading}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-bold text-white hover:bg-blue-500 disabled:opacity-50"
               >
@@ -570,7 +638,45 @@ export default function MutateModal({
             </>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+
+      <AnimatePresence>
+        {confirmOpen && !successOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-30 flex items-end justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:items-center">
+            <motion.section initial={{ y: 30, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 20, opacity: 0 }} className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-zinc-900">
+              <div className="border-b p-5">
+                <span className="flex size-11 items-center justify-center rounded-2xl bg-blue-100 text-blue-700"><AlertTriangle size={21} /></span>
+                <h3 className="mt-3 text-lg font-black">Konfirmasi {selectedAction?.label}</h3>
+                <p className="mt-1 text-xs leading-5 text-zinc-500">Pastikan identitas fisik implant dan jumlahnya sudah benar sebelum disimpan.</p>
+              </div>
+              <div className="space-y-2 bg-slate-50 p-4 text-xs dark:bg-zinc-950">
+                <div className="rounded-xl border bg-white p-3 dark:bg-zinc-900"><b className="line-clamp-2">{row.Deskripsi}</b><p className="mt-1 text-zinc-500">REF {editedRef} · LOT {editedLot || "Dikosongkan"}</p></div>
+                <div className="grid grid-cols-2 gap-2"><div className="rounded-xl bg-white p-3 text-center dark:bg-zinc-900"><span className="text-zinc-500">Jumlah</span><b className="block text-lg">{qty} pcs</b></div><div className="rounded-xl bg-white p-3 text-center dark:bg-zinc-900"><span className="text-zinc-500">Stok setelah aksi</span><b className="block text-lg text-blue-600">{nextStock}</b></div></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 p-4"><button type="button" onClick={() => setConfirmOpen(false)} className="h-11 rounded-xl border text-xs font-bold">Periksa lagi</button><button type="button" onClick={() => void submit()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 text-xs font-black text-white"><Check size={16} /> Setuju & simpan</button></div>
+            </motion.section>
+          </motion.div>
+        )}
+        {successOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-40 flex items-end justify-center bg-emerald-950/55 p-3 backdrop-blur-sm sm:items-center">
+            <motion.section initial={{ scale: 0.85, y: 24 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-2xl dark:bg-zinc-900">
+              <motion.span initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 260, damping: 18 }} className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><Check size={31} strokeWidth={3} /></motion.span>
+              <h3 className="mt-4 text-lg font-black">Aksi berhasil disimpan</h3>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">{selectedAction?.label} sebanyak {qty} pcs telah tercatat. Item akan disorot pada daftar stok.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (successResult) void onSuccess(successResult);
+                  close();
+                }}
+                className="mt-5 h-11 w-full rounded-xl bg-emerald-600 text-sm font-black text-white"
+              >
+                Selesai & kembali ke daftar
+              </button>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

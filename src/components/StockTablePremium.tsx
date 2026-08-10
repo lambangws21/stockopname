@@ -230,6 +230,7 @@ export default function StockTablePremium({
   const [selectedRow, setSelectedRow] = useState<StockRow | null>(null);
   const [movementRow, setMovementRow] = useState<StockRow | null>(null);
   const [movementOpen, setMovementOpen] = useState(false);
+  const [highlightedMovementNo, setHighlightedMovementNo] = useState<number | null>(null);
 
   const [search, setSearch] = useState("");
   const [mode, setMode] = useState<FilterMode>("ALL");
@@ -252,7 +253,97 @@ export default function StockTablePremium({
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [selectedVariantNos, setSelectedVariantNos] = useState<number[]>([]);
+  const [batchLotOpen, setBatchLotOpen] = useState(false);
+  const [batchLots, setBatchLots] = useState<Record<number, string>>({});
+  const [batchSaving, setBatchSaving] = useState(false);
   const lastQuickScanRef = useRef("");
+
+  const selectedVariants = useMemo(
+    () => data.filter((row) => selectedVariantNos.includes(Number(row.No))),
+    [data, selectedVariantNos]
+  );
+
+  const toggleVariantSelection = useCallback((row: StockRow) => {
+    const rowNo = Number(row.No);
+    setSelectedVariantNos((current) =>
+      current.includes(rowNo)
+        ? current.filter((value) => value !== rowNo)
+        : [...current, rowNo]
+    );
+  }, []);
+
+  const openBatchLotEditor = useCallback(() => {
+    setBatchLots(
+      Object.fromEntries(
+        selectedVariants.map((row) => [Number(row.No), String(row.Batch || "")])
+      )
+    );
+    setBatchLotOpen(true);
+  }, [selectedVariants]);
+
+  const requestSelectedRefill = useCallback(async () => {
+    if (!selectedVariants.length) return;
+    if (!window.confirm(`Tandai ${selectedVariants.length} varian sebagai sedang dipesan?`)) return;
+    setBatchSaving(true);
+    try {
+      const results = await Promise.all(
+        selectedVariants.map(async (row) => {
+          const response = await fetch("/api/super-sheet", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "warningQuickAction",
+              StockSheet: sheet,
+              No: row.No,
+              NoStok: row.NoStok,
+              Batch: row.Batch,
+              WorkflowStatus: "SEDANG DIPESAN",
+              by: "Batch Action Stock",
+            }),
+          });
+          const result = await response.json();
+          if (!response.ok || result.status !== "success") {
+            throw new Error(result.message || `Gagal memproses ${row.NoStok}`);
+          }
+          return result;
+        })
+      );
+      toast.success(`${results.length} varian masuk daftar permintaan refill`);
+      setSelectedVariantNos([]);
+      await reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Permintaan refill gagal");
+    } finally {
+      setBatchSaving(false);
+    }
+  }, [reload, selectedVariants, sheet]);
+
+  const saveSelectedLots = useCallback(async () => {
+    const missingLot = selectedVariants.find(
+      (row) => !String(batchLots[Number(row.No)] || "").trim()
+    );
+    if (missingLot) {
+      toast.error(`LOT untuk ${missingLot.NoStok || missingLot.Deskripsi} belum diisi`);
+      return;
+    }
+    setBatchSaving(true);
+    try {
+      for (const row of selectedVariants) {
+        await updateRow({
+          ...row,
+          Batch: String(batchLots[Number(row.No)]).trim().toUpperCase(),
+        });
+      }
+      toast.success(`${selectedVariants.length} LOT berhasil diperbarui`);
+      setBatchLotOpen(false);
+      setSelectedVariantNos([]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Pembaruan LOT gagal");
+    } finally {
+      setBatchSaving(false);
+    }
+  }, [batchLots, selectedVariants, updateRow]);
 
   useEffect(() => {
     const updateScrollTopVisibility = () => setShowScrollTop(window.scrollY > 560);
@@ -1315,7 +1406,7 @@ export default function StockTablePremium({
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.15 }}
-                      className={`border-b transition-colors last:border-b-0 ${
+                      className={`border-b transition-colors last:border-b-0 ${highlightedMovementNo !== null && (r.Variants || [r]).some((variant) => Number(variant.No) === highlightedMovementNo) ? "bg-blue-100 ring-2 ring-inset ring-blue-500 dark:bg-blue-950/50" : ""} ${
                         isSupportCenterStock(r)
                           ? "border-violet-200 bg-violet-50/80 hover:bg-violet-100 dark:border-violet-900 dark:bg-violet-950/25 dark:hover:bg-violet-950/40"
                           : "hover:bg-emerald-50/60 dark:hover:bg-emerald-950/20"
@@ -1325,9 +1416,21 @@ export default function StockTablePremium({
                       <td className="sticky left-0 z-10 bg-white px-3 py-2 text-zinc-600 dark:bg-zinc-900">
                         <div className="flex max-w-44 flex-wrap gap-1">
                           {(r.Variants || [r]).map((variant) => (
-                            <span key={`${variant.No}-${variant.NoStok}-${variant.Batch}`} className="rounded-md bg-blue-50 px-1.5 py-1 text-[8px] font-bold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                            <button
+                              type="button"
+                              key={`${variant.No}-${variant.NoStok}-${variant.Batch}`}
+                              onClick={() => toggleVariantSelection(variant)}
+                              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[8px] font-bold ${
+                                selectedVariantNos.includes(Number(variant.No))
+                                  ? "border-blue-600 bg-blue-600 text-white"
+                                  : "border-blue-100 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                              }`}
+                              aria-pressed={selectedVariantNos.includes(Number(variant.No))}
+                              aria-label={`Pilih REF ${variant.NoStok}`}
+                            >
+                              <Check size={9} strokeWidth={3} />
                               {variant.NoStok || "-"}
-                            </span>
+                            </button>
                           ))}
                         </div>
                       </td>
@@ -1359,8 +1462,8 @@ export default function StockTablePremium({
                       <td className="px-3 py-2 text-zinc-500">
                         <div className="flex max-w-44 flex-wrap gap-1">
                           {(r.Variants || [r]).map((variant) => (
-                            <span key={`${variant.No}-${variant.Batch}`} className={`rounded-md px-1.5 py-1 text-[8px] font-bold ${variant.Batch ? "bg-slate-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"}`}>
-                              {variant.Batch || "⚠ LOT belum diinput"}
+                            <span key={`${variant.No}-${variant.Batch}`} className={`rounded-md px-1.5 py-1 text-[8px] font-bold ${variant.Batch ? "bg-slate-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300" : "border border-dashed border-slate-300 bg-white text-zinc-500 dark:border-zinc-600 dark:bg-zinc-900"}`}>
+                              {variant.Batch || "⚠ LOT belum dicatat"}
                             </span>
                           ))}
                         </div>
@@ -1475,7 +1578,7 @@ export default function StockTablePremium({
             key={i}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`overflow-hidden rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+            className={`overflow-hidden rounded-xl border shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${highlightedMovementNo !== null && (r.Variants || [r]).some((variant) => Number(variant.No) === highlightedMovementNo) ? "ring-4 ring-blue-300 shadow-lg shadow-blue-200 dark:ring-blue-700" : ""} ${
               isSupportCenterStock(r)
                 ? "border-violet-400 bg-violet-50 shadow-violet-100 hover:border-violet-600 dark:border-violet-800 dark:bg-violet-950/25 dark:shadow-none"
                 : r.TotalQty <= 0
@@ -1494,8 +1597,23 @@ export default function StockTablePremium({
                 ? "bg-violet-600"
                 : "bg-zinc-500"
             }`} />
-            <div className="p-3.5 sm:p-4">
+            <div className="p-3">
               <div className="flex min-w-0 items-center justify-end gap-1.5 sm:flex-wrap sm:justify-start">
+                  {(r.VariantCount || 1) === 1 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleVariantSelection(r)}
+                      className={`mr-auto flex size-7 shrink-0 items-center justify-center rounded-lg border transition ${
+                        selectedVariantNos.includes(Number(r.No))
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-300 bg-white text-transparent dark:border-zinc-600 dark:bg-zinc-900"
+                      }`}
+                      aria-label={`Pilih ${r.Deskripsi}`}
+                      aria-pressed={selectedVariantNos.includes(Number(r.No))}
+                    >
+                      <Check size={15} strokeWidth={3} />
+                    </button>
+                  )}
                   <span className={`hidden h-7 shrink-0 items-center rounded-lg px-2.5 text-[9px] font-black uppercase tracking-wide sm:inline-flex ${
                     r.Brand === "NORMMED"
                       ? "bg-emerald-600 text-white"
@@ -1539,7 +1657,7 @@ export default function StockTablePremium({
                     </button>
                   )}
               </div>
-              <div className="mt-2 line-clamp-2 min-h-10 text-sm font-black uppercase leading-5 tracking-[0.01em]">
+              <div className="mt-1.5 line-clamp-2 text-[13px] font-black uppercase leading-4 tracking-[0.01em]">
                 {highlight(r.Deskripsi)}
               </div>
               <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[9px] font-bold text-zinc-500 sm:hidden">
@@ -1559,13 +1677,23 @@ export default function StockTablePremium({
                   </summary>
                   <div className="flex gap-1.5 overflow-x-auto border-t p-2">
                     {(r.Variants || [r]).map((variant) => (
-                      <div key={`${variant.No}-${variant.NoStok}-${variant.Batch}`} className="min-w-fit rounded-lg border bg-white px-2 py-1.5 dark:bg-zinc-900">
-                        <p className="text-[8px] font-black text-blue-700 dark:text-blue-300">REF {variant.NoStok || "Belum diinput"}</p>
+                      <div key={`${variant.No}-${variant.NoStok}-${variant.Batch}`} className={`min-w-fit rounded-lg border bg-white px-2 py-1.5 dark:bg-zinc-900 ${selectedVariantNos.includes(Number(variant.No)) ? "border-blue-500 ring-2 ring-blue-100" : ""}`}>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleVariantSelection(variant)}
+                            className={`flex size-4 shrink-0 items-center justify-center rounded border ${selectedVariantNos.includes(Number(variant.No)) ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 text-transparent"}`}
+                            aria-label={`Pilih REF ${variant.NoStok}`}
+                          >
+                            <Check size={10} strokeWidth={3} />
+                          </button>
+                          <p className="text-[8px] font-black text-blue-700 dark:text-blue-300">REF {variant.NoStok || "Belum diinput"}</p>
+                        </div>
                         {variant.Batch ? (
                           <p className="mt-0.5 text-[8px] font-bold text-zinc-600 dark:text-zinc-300">LOT {variant.Batch}</p>
                         ) : (
-                          <p className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[8px] font-black text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
-                            <AlertTriangle size={9} /> LOT belum diinput
+                          <p className="mt-1 inline-flex items-center gap-1 rounded border border-dashed border-slate-300 bg-white px-1.5 py-0.5 text-[8px] font-bold text-zinc-500 dark:border-zinc-600 dark:bg-zinc-900">
+                            <AlertTriangle size={9} className="text-amber-600" /> LOT belum dicatat
                           </p>
                         )}
                       </div>
@@ -1579,25 +1707,25 @@ export default function StockTablePremium({
                   {r.Batch ? (
                     <b className="text-zinc-600 dark:text-zinc-300">LOT {r.Batch}</b>
                   ) : (
-                    <b className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-1 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
-                      <AlertTriangle size={10} /> LOT belum diinput
+                    <b className="inline-flex items-center gap-1 rounded border border-dashed border-slate-300 bg-white px-1.5 py-1 text-zinc-500 dark:border-zinc-600 dark:bg-zinc-900">
+                      <AlertTriangle size={10} className="text-amber-600" /> LOT belum dicatat
                     </b>
                   )}
                 </div>
               )}
 
             <div className="mt-2 grid grid-cols-3 divide-x rounded-lg border-y bg-white/60 dark:border-zinc-700 dark:bg-zinc-900/40">
-              <div className="px-2 py-2">
+              <div className="px-2 py-1.5">
                 <div className={`text-[8px] font-bold uppercase ${isSupportCenterStock(r) ? "text-violet-600" : "text-emerald-600"}`}>{isSupportCenterStock(r) ? "Stok Pusat" : "Office"}</div>
                 <div className={`mt-0.5 text-sm font-black ${
                   isSupportCenterStock(r) ? "text-violet-600" : r.TotalQty <= 0 ? "text-red-600" : "text-zinc-900 dark:text-white"
                 }`}>{r.TotalQty} Pcs</div>
               </div>
-              <div className="px-2 py-2">
+              <div className="px-2 py-1.5">
                 <div className="text-[8px] font-bold uppercase text-zinc-500">Terpakai</div>
                 <div className={`mt-0.5 text-sm font-black ${Number(r.TERPAKAI || 0) > 0 ? "text-red-600" : "text-zinc-500"}`}>{r.TERPAKAI || 0} Pcs</div>
               </div>
-              <div className="px-2 py-2">
+              <div className="px-2 py-1.5">
                 <div className="text-[8px] font-bold uppercase text-zinc-500">Refill</div>
                 <div className={`mt-0.5 text-sm font-black ${Number(r.REFILL || 0) > 0 ? "text-amber-600" : "text-zinc-500"}`}>{r.REFILL || 0} Pcs</div>
               </div>
@@ -1610,7 +1738,7 @@ export default function StockTablePremium({
                   setHistoryNo((r.Variants || [r])[0].No);
                   setHistoryOpen(true);
                 }}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-blue-100 px-3 text-[10px] font-bold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-blue-100 px-3 text-[10px] font-bold text-blue-600 dark:bg-blue-950/40 dark:text-blue-300"
                 aria-label="Lihat riwayat implant"
               >
                 <NotebookTabs size={16} />
@@ -1683,6 +1811,86 @@ export default function StockTablePremium({
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {selectedVariants.length > 0 && !batchLotOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 18, scale: 0.98 }}
+            className="fixed inset-x-3 z-50 mx-auto flex max-w-xl items-center gap-2 rounded-2xl border border-blue-200 bg-white/95 p-2 shadow-2xl backdrop-blur dark:border-blue-900 dark:bg-zinc-900/95 sm:bottom-4"
+            style={{ bottom: isMobileViewport ? "calc(5.25rem + env(safe-area-inset-bottom))" : undefined }}
+          >
+            <div className="min-w-0 flex-1 px-1">
+              <b className="block text-xs">{selectedVariants.length} varian dipilih</b>
+              <span className="block truncate text-[9px] text-zinc-500">Edit LOT atau ajukan refill sekaligus</span>
+            </div>
+            <button type="button" onClick={openBatchLotEditor} disabled={batchSaving} className="h-9 rounded-xl border px-3 text-[10px] font-black disabled:opacity-50">
+              Isi LOT
+            </button>
+            <button type="button" onClick={() => void requestSelectedRefill()} disabled={batchSaving} className="inline-flex h-9 items-center gap-1 rounded-xl bg-blue-600 px-3 text-[10px] font-black text-white disabled:opacity-50">
+              {batchSaving ? <LoaderCircle size={13} className="animate-spin" /> : <ClipboardCheck size={13} />}
+              Refill
+            </button>
+            <button type="button" onClick={() => setSelectedVariantNos([])} className="flex size-9 shrink-0 items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100" aria-label="Batalkan pilihan">
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {batchLotOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10050] flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !batchSaving) setBatchLotOpen(false);
+            }}
+          >
+            <motion.section
+              initial={{ y: 40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 30, opacity: 0 }}
+              className="flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-3xl"
+            >
+              <header className="flex items-center justify-between border-b p-4">
+                <div>
+                  <h3 className="text-sm font-black">Isi LOT Massal</h3>
+                  <p className="text-[10px] text-zinc-500">{selectedVariants.length} varian terpilih · REF tidak diubah</p>
+                </div>
+                <button type="button" disabled={batchSaving} onClick={() => setBatchLotOpen(false)} className="flex size-9 items-center justify-center rounded-xl border disabled:opacity-50" aria-label="Tutup">
+                  <X size={16} />
+                </button>
+              </header>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-slate-50 p-3 pb-6 dark:bg-zinc-950">
+                {selectedVariants.map((row) => (
+                  <label key={row.No} className="block rounded-xl border bg-white p-3 dark:bg-zinc-900">
+                    <span className="line-clamp-1 text-[10px] font-black uppercase">{row.Deskripsi}</span>
+                    <span className="mt-0.5 block text-[9px] font-bold text-blue-600">REF {row.NoStok || "Belum dicatat"}</span>
+                    <span className="mt-2 block text-[9px] font-bold uppercase text-zinc-500">Nomor LOT</span>
+                    <input
+                      value={batchLots[Number(row.No)] || ""}
+                      onChange={(event) => setBatchLots((current) => ({ ...current, [Number(row.No)]: event.target.value }))}
+                      placeholder="Masukkan LOT"
+                      className="mt-1 h-10 w-full rounded-xl border bg-white px-3 text-sm font-bold uppercase outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:bg-zinc-950"
+                    />
+                  </label>
+                ))}
+              </div>
+              <footer className="grid grid-cols-[auto_1fr] gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-zinc-900">
+                <button type="button" disabled={batchSaving} onClick={() => setBatchLotOpen(false)} className="h-11 rounded-xl border px-4 text-xs font-bold disabled:opacity-50">Batal</button>
+                <button type="button" disabled={batchSaving} onClick={() => void saveSelectedLots()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-black text-white disabled:opacity-50">
+                  {batchSaving && <LoaderCircle size={15} className="animate-spin" />}
+                  Simpan {selectedVariants.length} LOT
+                </button>
+              </footer>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-[max(0.5rem,env(safe-area-inset-left))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.1)] backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/95 sm:hidden" aria-label="Navigasi utama Stock Implant">
         <div className="mx-auto grid max-w-lg grid-cols-4 gap-1">
           <MobileNavLink href="/logistik" label="Logistik" icon={<Warehouse size={17} />} />
@@ -1696,8 +1904,17 @@ export default function StockTablePremium({
       <EditModal
         open={editOpen}
         row={selectedRow}
-        onClose={() => setEditOpen(false)}
+        onClose={() => {
+          setEditOpen(false);
+          setSelectedRow(null);
+          setIsCreate(false);
+        }}
         onMovement={(row) => {
+          // Modal pergerakan menggantikan modal preview, bukan ditumpuk di atasnya.
+          // Dengan demikian setelah aksi selesai pengguna kembali ke daftar stok.
+          setEditOpen(false);
+          setSelectedRow(null);
+          setIsCreate(false);
           setMovementRow(row);
           setMovementOpen(true);
         }}
@@ -1723,15 +1940,23 @@ export default function StockTablePremium({
       <MutateModal
         open={movementOpen}
         row={movementRow}
+        variants={data}
         sheet={sheet}
         context={context}
         onClose={() => {
           setMovementOpen(false);
           setMovementRow(null);
         }}
-        onSuccess={async () => {
-          await reload();
+        onUpdateIdentity={async (updatedRow) => {
+          await updateRow(updatedRow);
+        }}
+        onSuccess={async (result) => {
+          if (result?.rowNo) {
+            setHighlightedMovementNo(result.rowNo);
+            window.setTimeout(() => setHighlightedMovementNo(null), 5000);
+          }
           setMovementRefresh((value) => value + 1);
+          await reload();
         }}
       />
 

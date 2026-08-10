@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { AnimatePresence, motion } from "framer-motion";
 // import KpiCards from "@/components/dashboard/KpiCard";
 import StockTablePremium from "@/components/StockTablePremium";
 import Scanner from "@/components/stock/Scanner";
@@ -372,6 +373,19 @@ function DashboardOverview({
   const searchRef = useRef<HTMLInputElement>(null);
   const refreshInFlightRef = useRef(false);
 
+  useEffect(() => {
+    const stored = localStorage.getItem("nex-dashboard-summary-open");
+    if (stored !== null) setMobileSummaryOpen(stored !== "false");
+  }, []);
+
+  const toggleMobileSummary = useCallback(() => {
+    setMobileSummaryOpen((current) => {
+      const next = !current;
+      localStorage.setItem("nex-dashboard-summary-open", String(next));
+      return next;
+    });
+  }, []);
+
   const refreshDashboard = useCallback(async (initial = false) => {
     if (refreshInFlightRef.current) return;
     refreshInFlightRef.current = true;
@@ -626,7 +640,7 @@ function DashboardOverview({
                               setNotificationsOpen(false);
                               setLowStockOpen(true);
                             }}
-                            className="h-8 w-full rounded-lg border border-red-200 bg-white text-[9px] font-black"
+                            className="min-h-9 w-full rounded-lg border border-red-200 bg-white px-3 text-[11px] font-black"
                           >
                             Lihat semua {lowStock.length} item
                           </button>
@@ -727,7 +741,7 @@ function DashboardOverview({
         <article className="overflow-hidden rounded-2xl border bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
           <button
             type="button"
-            onClick={() => setMobileSummaryOpen((value) => !value)}
+            onClick={toggleMobileSummary}
             className="flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-left"
             aria-expanded={mobileSummaryOpen}
           >
@@ -741,7 +755,16 @@ function DashboardOverview({
             </span>
           </button>
 
-          {mobileSummaryOpen && <>
+          <AnimatePresence initial={false}>
+          {mobileSummaryOpen && (
+          <motion.div
+            key="mobile-dashboard-summary"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.24, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
           <div className="border-b p-2">
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-zinc-800">
               {[
@@ -827,7 +850,7 @@ function DashboardOverview({
                 </div>
               )}
               {lowStock.length > 3 && (
-                <button type="button" onClick={() => setLowStockOpen(true)} className="w-full rounded-xl border py-2.5 text-[10px] font-black text-red-600">
+                <button type="button" onClick={() => setLowStockOpen(true)} className="min-h-10 w-full rounded-xl border px-3 py-2.5 text-[11px] font-black text-red-600">
                   Lihat semua {lowStock.length} item
                 </button>
               )}
@@ -854,7 +877,9 @@ function DashboardOverview({
               ))}
             </div>
           )}
-          </>}
+          </motion.div>
+          )}
+          </AnimatePresence>
         </article>
       </section>
 

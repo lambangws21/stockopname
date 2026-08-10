@@ -4,6 +4,7 @@ import "./globals.css";
 import {Toaster} from "sonner";
 import BackgroundTransactionMonitor from "@/components/BackgroundTransactionMonitor";
 import AppTutorial from "@/components/AppTutorial";
+import GlobalMotionProvider from "@/components/GlobalMotionProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -48,7 +49,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
-        {children}
+        <GlobalMotionProvider>{children}</GlobalMotionProvider>
         <AppTutorial />
         <BackgroundTransactionMonitor />
         <Toaster richColors position="top-right" />
