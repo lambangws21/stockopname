@@ -73,7 +73,23 @@ const PROCEDURES: HandoverProcedure[] = [
   "BIPOLAR",
 ];
 const BRANDS = ["NORMMED", "ZIMMER"] as const;
+function normalizeIdentityText(value: unknown) {
+  return String(value || "")
+    .toLocaleUpperCase("id-ID")
+    .replace(/^DR\.?\s*/i, "")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 type HandoverBrand = (typeof BRANDS)[number];
+type HandoverCustomerDoctor = {
+  id: string;
+  doctor: string;
+  hospital: string;
+  practiceHospital2: string;
+  practiceHospital3: string;
+  status: string;
+};
 type HandoverWizardStep =
   | "info"
   | "implants"
@@ -127,6 +143,7 @@ function OnlineHandoverContent() {
     OperationTime: "",
   }));
   const [loading, setLoading] = useState(true);
+  const [syncingStock, setSyncingStock] = useState(false);
   const [pageError, setPageError] = useState("");
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState("");
@@ -150,6 +167,7 @@ function OnlineHandoverContent() {
   const [openingDocumentId, setOpeningDocumentId] = useState("");
   const [supplementBase, setSupplementBase] = useState<OnlineHandover | null>(null);
   const [supplementRequestId, setSupplementRequestId] = useState("");
+  const [customerDoctors, setCustomerDoctors] = useState<HandoverCustomerDoctor[]>([]);
   const itemLoadMoreRef = useRef<HTMLDivElement>(null);
   const accessoryLoadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -178,7 +196,9 @@ function OnlineHandoverContent() {
       else {
         const localDraft = readLocalHandoverDraft();
         setForm(
-          localDraft || buildHandoverFromStock("TKR", "NORMMED", stockRows)
+          localDraft
+            ? refreshDraftStock(localDraft, stockRows)
+            : buildHandoverFromStock("TKR", "NORMMED", stockRows)
         );
       }
     } catch (error) {
@@ -200,6 +220,28 @@ function OnlineHandoverContent() {
         )
       );
   }, [publicView, requestedId, requestedToken]);
+
+  async function syncLatestStock() {
+    if (publicView || syncingStock) return;
+    setSyncingStock(true);
+    try {
+      const latest = await gasGET("Sheet1");
+      const latestRows = latest.data ?? [];
+      setStock(latestRows);
+      setForm((current) =>
+        current.Status === "DRAFT"
+          ? refreshDraftStock(current, latestRows)
+          : current
+      );
+      toast.success("Stok serah terima sudah disinkronkan dari Google Sheet");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Stok gagal disinkronkan"
+      );
+    } finally {
+      setSyncingStock(false);
+    }
+  }
 
   async function openSavedDocument(document: OnlineHandover) {
     if (openingDocumentId) return;
@@ -230,6 +272,39 @@ function OnlineHandoverContent() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (publicView) return;
+    let active = true;
+    void fetch("/api/customer-mapping", { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok || result.status !== "success") throw new Error(result.message || "Daftar dokter gagal dimuat");
+        if (active) setCustomerDoctors(Array.isArray(result.data) ? result.data : []);
+      })
+      .catch(() => {
+        // Form tetap dapat memakai input manual saat Customer Mapping tidak tersedia.
+      });
+    return () => { active = false; };
+  }, [publicView]);
+
+  const mappedDoctorOptions = useMemo(() => {
+    const hospitalKey = normalizeIdentityText(form.Hospital);
+    const matchingHospital = customerDoctors.filter((customer) => {
+      if (!hospitalKey) return true;
+      return [customer.hospital, customer.practiceHospital2, customer.practiceHospital3]
+        .some((hospital) => normalizeIdentityText(hospital) === hospitalKey);
+    });
+    const source = matchingHospital.length ? matchingHospital : customerDoctors;
+    const unique = new Map<string, HandoverCustomerDoctor>();
+    source.forEach((customer) => {
+      const key = normalizeIdentityText(customer.doctor);
+      if (key && !unique.has(key)) unique.set(key, customer);
+    });
+    return Array.from(unique.values()).sort((first, second) =>
+      first.doctor.localeCompare(second.doctor, "id-ID", { sensitivity: "base" })
+    );
+  }, [customerDoctors, form.Hospital]);
 
   useEffect(() => {
     if (loading || requestedId || form.Status !== "DRAFT") return;
@@ -641,7 +716,15 @@ function OnlineHandoverContent() {
         by: form.Receiver || "Rumah Sakit",
       });
       if (result.data) setForm(normalizeHandoverDocument(result.data));
-      toast.success("Pemakaian dan pengembalian implant berhasil disimpan");
+      if (result.customerMappingSync?.linked) {
+        toast.success("Operasi tersimpan dan terhubung ke Customer Mapping");
+      } else {
+        toast.warning(
+          result.customerMappingSync?.reason === "CUSTOMER_AMBIGUOUS"
+            ? "Operasi tersimpan, tetapi ditemukan lebih dari satu customer dengan dokter dan RS yang sama. Rapikan Mapping Customer."
+            : "Operasi tersimpan, tetapi dokter/RS belum cocok dengan Customer Mapping."
+        );
+      }
       const latestStock = await gasGET("Sheet1");
       setStock(latestStock.data ?? []);
       const updated = await listOnlineHandovers();
@@ -897,6 +980,17 @@ function OnlineHandoverContent() {
             <div className="flex items-center gap-2">
               {!publicView && <button
                 type="button"
+                disabled={syncingStock || form.Status !== "DRAFT"}
+                onClick={() => void syncLatestStock()}
+                className="inline-flex size-9 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 text-[10px] font-bold disabled:opacity-40 sm:h-10 sm:w-auto sm:px-3"
+                title="Ambil stok terbaru dari Google Sheet"
+                aria-label="Sinkronkan stok terbaru"
+              >
+                <RefreshCcw size={14} className={syncingStock ? "animate-spin" : ""} />
+                <span className="hidden sm:inline">{syncingStock ? "Sinkron..." : "Sync stok"}</span>
+              </button>}
+              {!publicView && <button
+                type="button"
                 disabled={!form.ID || printing || Boolean(supplementBase)}
                 onClick={() => void printDocument()}
                 className="hidden h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[10px] font-bold disabled:opacity-40 sm:inline-flex"
@@ -1075,7 +1169,21 @@ function OnlineHandoverContent() {
                 </div>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <TextField label="Hospital" value={form.Hospital} onChange={(Hospital) => setForm({ ...form, Hospital })} />
-                <TextField label="Surgeon / Dokter" value={form.Surgeon} onChange={(Surgeon) => setForm({ ...form, Surgeon })} />
+                <div>
+                  <TextField label="Surgeon / Dokter" value={form.Surgeon} onChange={(Surgeon) => setForm({ ...form, Surgeon })} list="handover-customer-doctors" />
+                  <datalist id="handover-customer-doctors">
+                    {mappedDoctorOptions.map((customer) => (
+                      <option key={customer.id || `${customer.doctor}-${customer.hospital}`} value={customer.doctor}>
+                        {[customer.hospital, customer.practiceHospital2, customer.practiceHospital3].filter(Boolean).join(" · ")}
+                      </option>
+                    ))}
+                  </datalist>
+                  <p className="mt-1 text-[9px] text-zinc-400">
+                    {mappedDoctorOptions.length
+                      ? `${mappedDoctorOptions.length} dokter dari Customer Mapping${form.Hospital ? " sesuai rumah sakit" : ""}.`
+                      : "Belum ada dokter yang cocok. Nama tetap dapat diketik manual."}
+                  </p>
+                </div>
                 <TextField label="Approved by" value={form.ApprovedBy} onChange={(ApprovedBy) => setForm({ ...form, ApprovedBy })} />
                 <TextField label="Tanggal serah terima" type="date" value={form.HandoverDate} onChange={(HandoverDate) => setForm({ ...form, HandoverDate, OperationDate: form.OperationDate || HandoverDate })} />
                 <TextField label="Tanggal operasi" type="date" value={form.OperationDate || ""} onChange={(OperationDate) => setForm({ ...form, OperationDate })} />
@@ -1598,8 +1706,8 @@ function OnlineHandoverContent() {
 
       {barcodeItem && barcodeDataUrl && (
         <div className="fixed inset-0 z-[120] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={(event) => event.target === event.currentTarget && setBarcodeItem(null)}>
-          <section className="w-full max-w-md rounded-t-3xl bg-white p-4 text-center shadow-2xl dark:bg-zinc-900 sm:rounded-3xl">
-            <div className="flex items-start justify-between gap-3 text-left"><div><p className="text-[9px] font-black tracking-[.16em] text-blue-600">BARCODE IMPLANT</p><h2 className="mt-1 text-sm font-black">{barcodeItem.description}</h2></div><button type="button" onClick={() => setBarcodeItem(null)} className="grid size-10 shrink-0 place-items-center rounded-xl border"><X size={17} /></button></div>
+          <section className="max-h-[calc(100dvh-0.75rem)] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-3xl bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-center shadow-2xl dark:bg-zinc-900 sm:max-h-[92dvh] sm:rounded-3xl">
+            <div className="sticky top-0 z-20 -mx-1 flex items-start justify-between gap-3 bg-white/95 px-1 pb-2 pt-[max(0.25rem,env(safe-area-inset-top))] text-left backdrop-blur dark:bg-zinc-900/95"><div><p className="text-[9px] font-black tracking-[.16em] text-blue-600">BARCODE IMPLANT</p><h2 className="mt-1 text-sm font-black">{barcodeItem.description}</h2></div><button type="button" onClick={() => setBarcodeItem(null)} className="grid size-11 shrink-0 place-items-center rounded-xl border bg-white shadow-sm dark:bg-zinc-900" aria-label="Tutup barcode"><X size={19} /></button></div>
             <NextImage unoptimized src={barcodeDataUrl} width={240} height={240} alt={`Barcode ${barcodeItem.partNumber}`} className="mx-auto mt-3 size-60" />
             <div className="grid grid-cols-2 gap-2 text-left"><div className="rounded-xl bg-blue-50 p-3"><span className="text-[9px] font-bold text-blue-500">REF</span><p className="break-all text-xs font-black text-blue-900">{barcodeItem.partNumber}</p></div><div className="rounded-xl bg-slate-100 p-3 dark:bg-zinc-800"><span className="text-[9px] font-bold text-zinc-500">LOT</span><p className="break-all text-xs font-black">{barcodeItem.batch || "-"}</p></div></div>
             <p className="mt-3 rounded-xl bg-emerald-50 p-3 text-[9px] leading-4 text-emerald-800">Scan QR ini melalui Scanner Universal untuk melihat stok dan status permintaan logistik.</p>
@@ -1620,8 +1728,8 @@ function OnlineHandoverContent() {
             }
           }}
         >
-          <section className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-2xl">
-            <header className="flex items-center justify-between border-b p-4">
+          <section className="flex max-h-[calc(100dvh-0.75rem)] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[92dvh] sm:rounded-2xl">
+            <header className="relative z-20 flex shrink-0 items-center justify-between border-b bg-white px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:bg-zinc-900 sm:p-4">
               <div>
                 <h2 className="text-sm font-black">
                   Tambah Aksesori / Item Lainnya
@@ -1633,7 +1741,7 @@ function OnlineHandoverContent() {
               <button
                 type="button"
                 onClick={() => setAccessoryModalOpen(false)}
-                className="flex size-10 items-center justify-center rounded-xl border"
+                className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-white shadow-sm dark:bg-zinc-900"
                 aria-label="Tutup modal"
               >
                 <X size={18} />
@@ -1753,7 +1861,7 @@ function OnlineHandoverContent() {
               )}
             </div>
 
-            <footer className="flex items-center gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-zinc-900 sm:p-4">
+            <footer className="flex shrink-0 items-center gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:bg-zinc-900 sm:p-4">
               <span className="min-w-24 text-center text-xs font-black text-blue-600">
                 {accessorySelection.length} dipilih
               </span>
@@ -1780,8 +1888,8 @@ function OnlineHandoverContent() {
             if (event.target === event.currentTarget) setShareModalOpen(false);
           }}
         >
-          <section className="w-full max-w-lg overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:rounded-2xl">
-            <header className="flex items-start justify-between bg-[#0f172a] p-4 text-white">
+          <section className="max-h-[calc(100dvh-0.75rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92dvh] sm:rounded-2xl">
+            <header className="sticky top-0 z-20 flex items-start justify-between bg-[#0f172a] px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))] text-white">
               <div className="flex gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500">
                   <Send size={18} />
@@ -1796,7 +1904,7 @@ function OnlineHandoverContent() {
               <button
                 type="button"
                 onClick={() => setShareModalOpen(false)}
-                className="flex size-9 items-center justify-center rounded-xl border border-white/15 bg-white/10"
+                className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10"
                 aria-label="Tutup modal"
               >
                 <X size={17} />
@@ -1893,9 +2001,9 @@ function OnlineHandoverContent() {
   );
 }
 
-function TextField({ label, value, onChange, type = "text", compact = false, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; compact?: boolean; disabled?: boolean }) {
+function TextField({ label, value, onChange, type = "text", compact = false, disabled = false, list }: { label: string; value: string; onChange: (value: string) => void; type?: string; compact?: boolean; disabled?: boolean; list?: string }) {
   const inputValue = type === "date" ? normalizeDateInput(value) : value || "";
-  return <label className="text-[10px] font-bold text-zinc-500">{label}<input type={type} value={inputValue} disabled={disabled} onChange={(event) => onChange(event.target.value)} className={`mt-1 w-full rounded-xl border bg-transparent px-3 text-sm font-medium text-zinc-900 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:text-white dark:disabled:bg-zinc-800 ${compact ? "h-10" : "h-11"}`} /></label>;
+  return <label className="text-[10px] font-bold text-zinc-500">{label}<input type={type} list={list} value={inputValue} disabled={disabled} onChange={(event) => onChange(event.target.value)} className={`mt-1 w-full rounded-xl border bg-transparent px-3 text-sm font-medium text-zinc-900 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-500 dark:text-white dark:disabled:bg-zinc-800 ${compact ? "h-10" : "h-11"}`} /></label>;
 }
 
 function ShareInfo({ label, value }: { label: string; value: string }) {
@@ -3281,14 +3389,30 @@ function refreshDraftStock(
       row,
     ])
   );
+  const byRef = new Map<string, StockRow[]>();
+  rows.forEach((row) => {
+    const ref = String(row.NoStok || "").trim().toUpperCase();
+    if (!ref) return;
+    byRef.set(ref, [...(byRef.get(ref) || []), row]);
+  });
   return {
     ...document,
     Items: document.Items.map((item) => {
+      const itemRef = String(item.partNumber || "").trim();
+      const itemBatch = String(item.batch || "").trim();
+      const exactStockRow = byKey.get(`${itemRef}::${itemBatch}`);
+      const numberedStockRow = byRow.get(Number(item.stockRow || 0));
+      const rowStillMatchesRef =
+        numberedStockRow &&
+        String(numberedStockRow.NoStok || "").trim().toUpperCase() ===
+          itemRef.toUpperCase()
+          ? numberedStockRow
+          : undefined;
+      const sameRefRows = byRef.get(itemRef.toUpperCase()) || [];
       const stockRow =
-        byRow.get(Number(item.stockRow || 0)) ||
-        byKey.get(
-          `${String(item.partNumber).trim()}::${String(item.batch).trim()}`
-        );
+        exactStockRow ||
+        rowStillMatchesRef ||
+        (sameRefRows.length === 1 ? sameRefRows[0] : undefined);
       if (!stockRow) return item;
       const supplySource = normalizeSupplySource(
         stockRow.SupplySource || item.supplySource
@@ -3303,6 +3427,11 @@ function refreshDraftStock(
         supplySource,
         stockRow: stockRow.No,
         qtyChecked: officeAvailable,
+        // Draft lama dapat menyimpan officeAfter=0. Saat sinkronisasi draft,
+        // angka ini harus mengikuti stok Sheet terbaru agar UI tidak terus
+        // menampilkan nilai lama walaupun Qty/TotalQty sudah diperbarui.
+        officeBefore: officeAvailable,
+        officeAfter: officeAvailable,
         selected: available > 0 ? item.selected : false,
         qtyIssued:
           available > 0

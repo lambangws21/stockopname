@@ -42,6 +42,16 @@ export async function saveOnlineHandover(
     message?: string;
     ID?: string;
     data?: OnlineHandover;
+    customerMappingSync?: {
+      linked: boolean;
+      created?: boolean;
+      updated?: boolean;
+      customerId?: string;
+      usageId?: string;
+      reason?: string;
+      matchCount?: number;
+      message?: string;
+    };
   };
   if (!response.ok || json.status === "error") {
     throw new Error(json.message || "Serah terima gagal disimpan");
@@ -64,6 +74,16 @@ export async function settleOnlineHandover(
     status: "success" | "error";
     message?: string;
     data?: OnlineHandover;
+    customerMappingSync?: {
+      linked: boolean;
+      created?: boolean;
+      updated?: boolean;
+      customerId?: string;
+      usageId?: string;
+      reason?: string;
+      matchCount?: number;
+      message?: string;
+    };
   };
   if (!response.ok || json.status === "error") {
     throw new Error(json.message || "Pemakaian implant gagal disimpan");

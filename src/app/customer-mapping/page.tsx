@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import NextImage from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft,
   BarChart3,
   Building2,
+  Camera,
   CheckCircle2,
   Clock3,
   Pencil,
@@ -28,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Bar,
   BarChart,
@@ -76,6 +78,7 @@ type CustomerFormData = {
   orthopedicCaseTypes: string;
   implantVendors: string;
   vendorSupport: string;
+  subdis: string;
 };
 
 type ConfirmState = {
@@ -106,6 +109,19 @@ type JourneyEntryState = {
   hospital3: string;
 };
 
+type UsageEntryState = {
+  row: CustomerMappingRow;
+  doctor: string;
+  patientName: string;
+  hospital: string;
+  operationDate: string;
+  procedureType: string;
+  implantText: string;
+  note: string;
+  photoDataUrl: string;
+  photoNote: string;
+};
+
 const emptyForm: CustomerFormData = {
   id: "",
   customerType: "TARGET",
@@ -134,6 +150,7 @@ const emptyForm: CustomerFormData = {
   orthopedicCaseTypes: "",
   implantVendors: "",
   vendorSupport: "",
+  subdis: "",
 };
 
 const orthopedicCaseOptions = ["Artroplasty HIP", "Artroplasty KNEE", "Artroscopy", "Trauma", "Nailing"];
@@ -293,11 +310,14 @@ function getDesktopViewportSnapshot() {
 
 function CustomerMappingDashboard() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const customerSearchRef = useRef<HTMLInputElement>(null);
+  const floatingSearchRef = useRef<HTMLInputElement>(null);
   const [rows, setRows] = useState<CustomerMappingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [workingId, setWorkingId] = useState("");
   const [query, setQuery] = useState("");
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [status, setStatus] = useState<"ALL" | CustomerStatus>("ALL");
   const [kind, setKind] = useState<"ALL" | "EXISTING" | "TARGET">("ALL");
   const [owner, setOwner] = useState("Lambang");
@@ -313,6 +333,8 @@ function CustomerMappingDashboard() {
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [exporting, setExporting] = useState(false);
   const [journeyEntry, setJourneyEntry] = useState<JourneyEntryState | null>(null);
+  const [usageEntry, setUsageEntry] = useState<UsageEntryState | null>(null);
+  const [savingUsage, setSavingUsage] = useState(false);
   const [showMobileInsights, setShowMobileInsights] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [engagementFilter, setEngagementFilter] = useState<UsageProductFilter>("ALL");
@@ -321,6 +343,19 @@ function CustomerMappingDashboard() {
     getDesktopViewportSnapshot,
     () => false
   );
+
+  useEffect(() => {
+    const openCustomerSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchModalOpen(true);
+        window.setTimeout(() => floatingSearchRef.current?.focus(), 50);
+      }
+      if (event.key === "Escape") setSearchModalOpen(false);
+    };
+    window.addEventListener("keydown", openCustomerSearch);
+    return () => window.removeEventListener("keydown", openCustomerSearch);
+  }, []);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -394,6 +429,7 @@ function CustomerMappingDashboard() {
         row.practiceHospital3,
         row.territory,
         row.owner,
+        row.subdis,
         row.phone,
         row.specialty,
         row.implantUsed,
@@ -405,6 +441,26 @@ function CustomerMappingDashboard() {
         .includes(needle);
     });
   }, [kind, query, rows, status]);
+
+  const floatingSearchResults = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows.slice(0, 12);
+    return rows.filter((row) => [
+      row.doctor,
+      row.hospital,
+      row.practiceHospital2,
+      row.practiceHospital3,
+      row.territory,
+      row.owner,
+      row.subdis,
+      row.phone,
+      row.specialty,
+      row.implantUsed,
+      row.productOffered,
+      row.procedureType,
+      row.note,
+    ].join(" ").toLowerCase().includes(needle)).slice(0, 30);
+  }, [query, rows]);
 
   const hospitalRelationCount = useMemo(() => rows.reduce((total, row) => total + [row.hospital, row.practiceHospital2, row.practiceHospital3].filter((hospital, index, hospitals) => hospital && hospitals.findIndex((item) => normalizeCustomerText(item) === normalizeCustomerText(hospital)) === index).length, 0), [rows]);
 
@@ -664,6 +720,7 @@ function CustomerMappingDashboard() {
         orthopedicCaseTypes: row.orthopedicCaseTypes || "",
         implantVendors: row.implantVendors || "",
         vendorSupport: row.vendorSupport || "",
+        subdis: row.subdis || "",
       });
       setFormNotice(missing);
       setResumeStatus(nextStatus);
@@ -755,6 +812,7 @@ function CustomerMappingDashboard() {
       orthopedicCaseTypes: row.orthopedicCaseTypes || "",
       implantVendors: row.implantVendors || "",
       vendorSupport: row.vendorSupport || "",
+      subdis: row.subdis || "",
     });
     setFormNotice([]);
     setResumeStatus(null);
@@ -843,7 +901,12 @@ function CustomerMappingDashboard() {
       if (!response.ok || result.status !== "success") throw new Error(result.message || "Gagal memperbarui journey");
       setRows((current) => current.map((item) => item.id === row.id ? result.data : item));
       setJourneyEntry(null);
-      toast.success(`Journey diperbarui: ${journeyLabel[nextStage]}`);
+      const skipped = Array.isArray(result.skippedStages) ? result.skippedStages : [];
+      toast.success(
+        skipped.length
+          ? `Berhasil loncat ke ${journeyLabel[nextStage]}. ${skipped.map((stage: CustomerJourneyStage) => journeyLabel[stage]).join(", ")} tetap tercatat.`
+          : `Journey diperbarui: ${journeyLabel[nextStage]}`
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gagal memperbarui journey");
     } finally {
@@ -887,6 +950,7 @@ function CustomerMappingDashboard() {
         orthopedicCaseTypes: row.orthopedicCaseTypes || "",
         implantVendors: row.implantVendors || "",
         vendorSupport: row.vendorSupport || "",
+        subdis: row.subdis || "",
       });
       setFormNotice(missing);
       setResumeJourney(nextStage);
@@ -912,6 +976,64 @@ function CustomerMappingDashboard() {
       hospital2: row.practiceHospital2 || "",
       hospital3: row.practiceHospital3 || "",
     });
+  }
+
+  function openUsageEntry(row: CustomerMappingRow) {
+    setUsageEntry({
+      row,
+      doctor: row.doctor || "",
+      patientName: "",
+      hospital: row.usageHospital || row.hospital || row.practiceHospital2 || row.practiceHospital3 || "",
+      operationDate: new Date().toISOString().slice(0, 10),
+      procedureType: row.procedureType || "",
+      implantText: row.implantUsed || row.productOffered || "",
+      note: "",
+      photoDataUrl: "",
+      photoNote: "",
+    });
+  }
+
+  async function saveUsageEntry() {
+    if (!usageEntry) return;
+    const implantItems = usageEntry.implantText
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (!usageEntry.doctor.trim() || !usageEntry.patientName.trim() || !usageEntry.hospital.trim() || !usageEntry.operationDate || !usageEntry.procedureType.trim() || !implantItems.length) {
+      toast.error("Operator, pasien, RS, tanggal, jenis operasi, dan implant wajib diisi");
+      return;
+    }
+    setSavingUsage(true);
+    try {
+      const response = await fetch("/api/customer-mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          intent: "usage",
+          customerId: usageEntry.row.id,
+          doctor: usageEntry.doctor,
+          patientName: usageEntry.patientName,
+          hospital: usageEntry.hospital,
+          operationDate: usageEntry.operationDate,
+          procedureType: usageEntry.procedureType,
+          implantItems,
+          note: usageEntry.note,
+          photoDataUrl: usageEntry.photoDataUrl,
+          photoNote: usageEntry.photoNote,
+          owner: usageEntry.row.owner || owner.trim(),
+          by: owner.trim() || usageEntry.row.owner || "Mapping User",
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.status !== "success") throw new Error(result.message || "Pemakaian implant gagal disimpan");
+      setRows((current) => current.map((item) => item.id === usageEntry.row.id ? result.data : item));
+      setUsageEntry(null);
+      toast.success(`Pemakaian ${implantItems.length} implant berhasil disimpan`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Pemakaian implant gagal disimpan");
+    } finally {
+      setSavingUsage(false);
+    }
   }
 
   function requestSaveCustomer(event: React.FormEvent<HTMLFormElement>) {
@@ -946,6 +1068,25 @@ function CustomerMappingDashboard() {
       action: saveCustomer,
     });
   }
+
+  function closeTopMobileOverlay() {
+    if (confirmation) return setConfirmation(null);
+    if (searchModalOpen) return setSearchModalOpen(false);
+    if (usageEntry) return setUsageEntry(null);
+    if (journeyEntry) return setJourneyEntry(null);
+    if (formOpen) {
+      setFormOpen(false);
+      setFormNotice([]);
+      setResumeStatus(null);
+      setResumeJourney(null);
+      return;
+    }
+    if (profileOpen) setProfileOpen(false);
+  }
+
+  const mobileOverlayOpen = Boolean(
+    confirmation || searchModalOpen || usageEntry || journeyEntry || formOpen || profileOpen
+  );
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -1022,6 +1163,27 @@ function CustomerMappingDashboard() {
                 </div>
               </div>
             </div>
+          </div>
+          <div className="relative mt-5 max-w-3xl">
+            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-blue-200" size={18} />
+            <input
+              ref={customerSearchRef}
+              value={query}
+              readOnly
+              onFocus={() => {
+                setSearchModalOpen(true);
+                window.setTimeout(() => floatingSearchRef.current?.focus(), 50);
+              }}
+              onClick={() => setSearchModalOpen(true)}
+              placeholder="Cari dokter, rumah sakit, wilayah, implant, atau owner..."
+              className="h-12 w-full cursor-pointer rounded-2xl border border-white/20 bg-white/10 pl-10 pr-24 text-sm text-white outline-none backdrop-blur placeholder:text-slate-400 focus:border-blue-300 focus:bg-white/15 focus:ring-4 focus:ring-blue-400/10"
+            />
+            {query ? (
+              <button type="button" onClick={() => { setQuery(""); setSearchModalOpen(true); window.setTimeout(() => floatingSearchRef.current?.focus(), 50); }} className="absolute right-2 top-1/2 flex h-8 items-center gap-1 rounded-xl bg-white/10 px-2.5 text-[10px] font-bold text-white -translate-y-1/2 hover:bg-white/20"><X size={13} /> Hapus</button>
+            ) : (
+              <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded-lg bg-white/10 px-2 py-1 text-[9px] font-bold text-slate-300 sm:inline">⌘ / Ctrl K</span>
+            )}
+            {query && <p className="mt-2 text-[10px] font-semibold text-blue-100">{filteredRows.length} customer ditemukan</p>}
           </div>
         </motion.header>
 
@@ -1140,12 +1302,13 @@ function CustomerMappingDashboard() {
                   onEdit={openEditForm}
                   onDelete={requestDelete}
                   onJourney={requestJourney}
+                  onUsage={openUsageEntry}
                   onSelect={() => openDoctorProfile(row.id)}
                 />
               ))}
             </div>
           ) : filteredRows.length ? (
-            <CustomerTable rows={filteredRows} onSelect={openDoctorProfile} onEdit={openEditForm} />
+            <CustomerTable rows={filteredRows} onSelect={openDoctorProfile} onEdit={openEditForm} onUsage={openUsageEntry} />
           ) : (
             <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
               <div className="mb-4 rounded-2xl bg-blue-50 p-4 text-blue-600">
@@ -1160,6 +1323,84 @@ function CustomerMappingDashboard() {
           )}
         </section>
       </div>
+      <AnimatePresence>
+        {searchModalOpen ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10070] flex items-start justify-center bg-slate-950/55 p-3 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-sm sm:pt-[8vh]"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setSearchModalOpen(false);
+            }}
+          >
+            <motion.section
+              initial={{ opacity: 0, y: -18, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -12, scale: 0.98 }}
+              className="flex max-h-[88dvh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/20 bg-white shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Cari customer"
+            >
+              <header className="border-b bg-linear-to-r from-slate-950 to-blue-950 p-3 text-white sm:p-4">
+                <div className="flex items-center gap-2">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/20 text-blue-200"><Search size={19} /></span>
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      ref={floatingSearchRef}
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Ketik dokter, RS, implant, atau owner..."
+                      className="h-11 w-full rounded-xl border border-white/15 bg-white/10 px-3 pr-10 text-sm text-white outline-none placeholder:text-slate-400 focus:border-blue-300 focus:ring-4 focus:ring-blue-400/10"
+                      autoComplete="off"
+                    />
+                    {query ? <button type="button" onClick={() => { setQuery(""); floatingSearchRef.current?.focus(); }} className="absolute right-1.5 top-1.5 flex size-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 hover:text-white" aria-label="Hapus pencarian"><X size={15} /></button> : null}
+                  </div>
+                  <button type="button" onClick={() => setSearchModalOpen(false)} className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-white/15 text-slate-300 hover:bg-white/10 hover:text-white" aria-label="Tutup pencarian"><X size={18} /></button>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[9px] text-blue-100"><span>{query ? `${floatingSearchResults.length} hasil ditampilkan` : "Customer terbaru · mulai mengetik untuk mencari"}</span><span className="hidden rounded-md bg-white/10 px-2 py-1 sm:inline">ESC untuk tutup</span></div>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50 p-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-4">
+                {floatingSearchResults.length ? (
+                  <div className="space-y-2">
+                    {floatingSearchResults.map((row, index) => (
+                      <motion.button
+                        type="button"
+                        key={row.id || `${row.doctor}-${row.hospital}-${index}`}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: Math.min(index, 8) * 0.025 }}
+                        onClick={() => {
+                          setSearchModalOpen(false);
+                          openDoctorProfile(row.id);
+                        }}
+                        className="flex w-full items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
+                      >
+                        <span className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-indigo-100 font-black text-indigo-700">
+                          {row.photoUrl || row.photoFileId ? <DoctorPhotoImage src={doctorPhotoSrc(row.photoUrl, row.photoFileId)} name={row.doctor} className="size-full object-cover" /> : row.doctor?.replace(/^(dr\.?|Dr\.?)\s*/i, "").charAt(0) || "D"}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-start justify-between gap-2"><b className="line-clamp-1 text-sm text-slate-900">{row.doctor || "Dokter belum diisi"}</b><span className={`shrink-0 rounded-full px-2 py-1 text-[8px] font-black ring-1 ${statusStyle[row.status]}`}>{statusLabel[row.status]}</span></span>
+                          <span className="mt-1 flex items-center gap-1.5 text-[10px] text-slate-600"><Building2 size={12} className="shrink-0" /><span className="truncate">{row.hospital || "Rumah sakit belum diisi"}</span></span>
+                          <span className="mt-2 flex flex-wrap gap-1.5">
+                            {row.territory ? <span className="rounded-md bg-slate-100 px-2 py-1 text-[8px] font-bold text-slate-600">{row.territory}</span> : null}
+                            {row.subdis ? <span className="rounded-md bg-violet-50 px-2 py-1 text-[8px] font-bold text-violet-700">Subdis: {row.subdis}</span> : null}
+                            {row.implantUsed || row.productOffered ? <span className="max-w-full truncate rounded-md bg-blue-50 px-2 py-1 text-[8px] font-bold text-blue-700">{row.implantUsed || row.productOffered}</span> : null}
+                            {row.usageCount > 0 ? <span className="rounded-md bg-emerald-50 px-2 py-1 text-[8px] font-bold text-emerald-700">Terpakai {row.usageCount}x</span> : null}
+                          </span>
+                        </span>
+                      </motion.button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex min-h-60 flex-col items-center justify-center text-center"><span className="flex size-14 items-center justify-center rounded-2xl bg-slate-200 text-slate-500"><Search size={24} /></span><h3 className="mt-3 text-sm font-black">Customer tidak ditemukan</h3><p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Coba gunakan nama dokter, rumah sakit, wilayah, owner, atau nama implant.</p><button type="button" onClick={() => { setQuery(""); floatingSearchRef.current?.focus(); }} className="mt-4 rounded-xl border bg-white px-4 py-2 text-xs font-bold text-blue-700">Reset pencarian</button></div>
+                )}
+              </div>
+            </motion.section>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
       {formOpen ? (
         <CustomerFormModal
           form={form}
@@ -1178,6 +1419,7 @@ function CustomerMappingDashboard() {
       ) : null}
       {profileOpen && selectedDoctor ? <DoctorProfileModal doctor={selectedDoctor} onClose={() => setProfileOpen(false)} onEdit={(row) => { setProfileOpen(false); openEditForm(row); }} /> : null}
       {journeyEntry ? <JourneyEntryModal value={journeyEntry} busy={workingId === journeyEntry.row.id} onChange={setJourneyEntry} onCancel={() => setJourneyEntry(null)} onConfirm={() => void advanceJourney(journeyEntry.row, journeyEntry.nextStage, journeyEntry)} /> : null}
+      {usageEntry ? <UsageEntryModal value={usageEntry} busy={savingUsage} onChange={setUsageEntry} onCancel={() => setUsageEntry(null)} onConfirm={() => void saveUsageEntry()} /> : null}
       {confirmation ? (
         <ConfirmationModal
           value={confirmation}
@@ -1188,6 +1430,19 @@ function CustomerMappingDashboard() {
           }}
           onConfirm={() => void runConfirmedAction()}
         />
+      ) : null}
+      {mobileOverlayOpen ? (
+        <motion.button
+          type="button"
+          initial={{ opacity: 0, y: 18, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          onClick={closeTopMobileOverlay}
+          className="fixed right-4 z-[10100] inline-flex h-11 items-center gap-2 rounded-full bg-slate-950 px-4 text-xs font-black text-white shadow-2xl ring-2 ring-white/80 sm:hidden"
+          style={{ bottom: "calc(5.25rem + env(safe-area-inset-bottom))" }}
+          aria-label="Tutup jendela aktif"
+        >
+          <X size={16} /> Tutup
+        </motion.button>
       ) : null}
     </main>
   );
@@ -1417,12 +1672,14 @@ function DoctorProfilePanel({ doctor, onEdit }: { doctor: CustomerMappingRow | n
       <div className="min-w-0 p-1 sm:p-2">
         <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">Selected doctor profile</p><h2 className="mt-1 text-lg font-semibold leading-snug text-slate-900 sm:text-xl">{doctor.doctor || "Nama dokter belum diisi"}</h2><p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-indigo-600"><Stethoscope size={13} /> {doctor.specialty || "Spesialisasi belum diisi"}</p></div><button type="button" onClick={() => onEdit(doctor)} className="shrink-0 rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" title="Edit profil dan foto"><Pencil size={15} /></button></div>
         <p className="mt-3 line-clamp-2 rounded-xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">{doctor.note || doctor.plan || "Belum ada catatan atau rencana pendekatan."}</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-7">
           <ProfileLine icon={Phone} label="Nomor HP" value={doctor.phone || "Belum diisi"} />
           <ProfileLine icon={MapPin} label="Territory" value={doctor.territory || "Belum diisi"} />
           <ProfileLine icon={UserCheck} label="Owner / Sales" value={doctor.owner || "Belum diisi"} />
+          <ProfileLine icon={Building2} label="Subdis" value={doctor.subdis || "Belum diisi"} />
           <ProfileLine icon={Package} label="Produk" value={doctor.productOffered || "Belum ditawarkan"} />
           <ProfileLine icon={Repeat2} label="Total / Ulang" value={`${doctor.usageCount || 0}x / ${Math.max(0, (doctor.usageCount || 0) - 1)}x`} />
+          <ProfileLine icon={Clock3} label="Operasi terakhir" value={doctor.lastUsedAt ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(new Date(doctor.lastUsedAt)) : "Belum tercatat"} />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">{hospitals.length ? hospitals.map((hospital, index) => <span key={`${hospital}-${index}`} className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1.5 text-[10px] font-medium text-indigo-700"><Building2 size={11} />{hospital}</span>) : <span className="text-xs text-slate-400">Belum ada rumah sakit praktik</span>}</div>
       </div>
@@ -1548,7 +1805,54 @@ function FilterGroup({ value, options, onChange }: { value: string; options: str
   );
 }
 
-function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onSelect }: { row: CustomerMappingRow; busy: boolean; onDecision: (row: CustomerMappingRow, status: CustomerStatus) => void; onEdit: (row: CustomerMappingRow) => void; onDelete: (row: CustomerMappingRow) => void; onJourney: (row: CustomerMappingRow) => void; onSelect: () => void }) {
+function UsageEntryModal({ value, busy, onChange, onCancel, onConfirm }: { value: UsageEntryState; busy: boolean; onChange: (value: UsageEntryState) => void; onCancel: () => void; onConfirm: () => void }) {
+  const implants = value.implantText.split(/[,\n]/).map((item) => item.trim()).filter(Boolean);
+  const field = (key: keyof UsageEntryState, next: string) => onChange({ ...value, [key]: next });
+  async function selectPhoto(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      field("photoDataUrl", await prepareDoctorPhoto(file));
+      toast.success("Foto operasi siap disimpan");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Foto gagal diproses");
+    } finally {
+      event.target.value = "";
+    }
+  }
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[10060] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-4">
+      <motion.section initial={{ y: 36, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} className="flex max-h-[94dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl">
+        <header className="flex items-start justify-between gap-3 border-b bg-linear-to-r from-emerald-700 to-teal-700 p-4 text-white sm:p-5">
+          <div><p className="text-[9px] font-bold uppercase tracking-[0.18em] text-emerald-100">Database Pemakaian Implant</p><h2 className="mt-1 text-lg font-black">Gunakan ulang · {value.row.doctor}</h2><p className="mt-1 text-[10px] text-emerald-100">Simpan operasi, pasien, implant, dan dokumentasi foto.</p></div>
+          <button type="button" disabled={busy} onClick={onCancel} className="flex size-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 disabled:opacity-50" aria-label="Tutup"><X size={18} /></button>
+        </header>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50 p-4 pb-28 sm:grid sm:grid-cols-2 sm:gap-4 sm:space-y-0 sm:pb-5">
+          <div className="space-y-3">
+            <FormInput label="Nama operator / dokter" value={value.doctor} onChange={(next) => field("doctor", next)} placeholder="Nama dokter operator" required />
+            <FormInput label="Nama pasien" value={value.patientName} onChange={(next) => field("patientName", next)} placeholder="Nama atau inisial pasien" required />
+            <FormInput label="Rumah sakit" value={value.hospital} onChange={(next) => field("hospital", next)} placeholder="Rumah sakit operasi" required />
+            <label className="space-y-1.5 text-sm font-medium text-slate-700"><RequiredLabel label="Tanggal operasi" required /><input type="date" value={value.operationDate} onChange={(event) => field("operationDate", event.target.value)} className="h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50/50 px-3 outline-none focus:ring-2 focus:ring-emerald-100" /></label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700"><RequiredLabel label="Jenis operasi" required /><input value={value.procedureType} onChange={(event) => field("procedureType", event.target.value)} list="usage-procedure-options" placeholder="TKR, THR, Bipolar, UKA..." className="h-11 w-full rounded-xl border border-emerald-300 bg-emerald-50/50 px-3 outline-none focus:ring-2 focus:ring-emerald-100" /><datalist id="usage-procedure-options">{["TKR", "THR", "BIPOLAR", "UKA", "TKR PERSONA", "TKR VANGUARD"].map((item) => <option key={item} value={item} />)}</datalist></label>
+          </div>
+          <div className="space-y-3">
+            <label className="space-y-1.5 text-sm font-medium text-slate-700"><RequiredLabel label="Implant yang digunakan" required /><textarea value={value.implantText} onChange={(event) => field("implantText", event.target.value)} rows={5} placeholder="Satu implant per baris, atau pisahkan dengan koma" className="w-full rounded-xl border border-emerald-300 bg-emerald-50/50 px-3 py-2.5 outline-none focus:ring-2 focus:ring-emerald-100" /><span className="block text-[10px] text-slate-400">{implants.length} item akan disimpan sebagai daftar JSON dan teks.</span></label>
+            {implants.length > 0 && <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto rounded-xl border bg-white p-2">{implants.map((item, index) => <span key={`${item}-${index}`} className="rounded-full bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">{item}</span>)}</div>}
+            <div className="overflow-hidden rounded-2xl border border-dashed border-emerald-300 bg-white p-3">
+              {value.photoDataUrl ? <div className="relative"><NextImage src={value.photoDataUrl} alt="Preview dokumentasi operasi" width={900} height={900} unoptimized className="h-40 w-full rounded-xl object-cover" /><button type="button" onClick={() => field("photoDataUrl", "")} className="absolute right-2 top-2 rounded-lg bg-white/90 px-2 py-1 text-[10px] font-black text-red-600 shadow">Hapus</button></div> : <div className="flex h-28 flex-col items-center justify-center text-center text-slate-400"><Camera size={24} /><p className="mt-2 text-xs font-semibold">Belum ada foto dokumentasi</p></div>}
+              <label className="mt-2 inline-flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-black text-white"><Camera size={15} /> {value.photoDataUrl ? "Ambil ulang / ganti foto" : "Ambil atau upload foto"}<input type="file" accept="image/*" capture="environment" onChange={(event) => void selectPhoto(event)} className="sr-only" /></label>
+            </div>
+            <FormInput label="Keterangan foto" value={value.photoNote} onChange={(next) => field("photoNote", next)} placeholder="Contoh: Label box dan implant terpakai" />
+            <FormTextarea label="Catatan operasi" value={value.note} onChange={(next) => field("note", next)} placeholder="Catatan tambahan pemakaian" />
+          </div>
+        </div>
+        <footer className="sticky bottom-0 z-10 grid grid-cols-[auto_1fr] gap-2 border-t bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"><button type="button" disabled={busy} onClick={onCancel} className="h-11 rounded-xl border px-4 text-xs font-bold disabled:opacity-50">Batal</button><button type="button" disabled={busy} onClick={onConfirm} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-xs font-black text-white disabled:opacity-50">{busy ? <Clock3 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} {busy ? "Menyimpan..." : "Simpan Pemakaian"}</button></footer>
+      </motion.section>
+    </motion.div>
+  );
+}
+
+function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onUsage, onSelect }: { row: CustomerMappingRow; busy: boolean; onDecision: (row: CustomerMappingRow, status: CustomerStatus) => void; onEdit: (row: CustomerMappingRow) => void; onDelete: (row: CustomerMappingRow) => void; onJourney: (row: CustomerMappingRow, requestedStage?: CustomerJourneyStage) => void; onUsage: (row: CustomerMappingRow) => void; onSelect: () => void }) {
   const stage = row.journeyStage || "PROSPECT";
   return (
     <article onClick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} className="flex min-h-72 cursor-pointer flex-col rounded-2xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg">
@@ -1565,6 +1869,7 @@ function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onSe
         <p className="mt-1 flex items-start gap-2 text-sm text-slate-600"><Building2 className="mt-0.5 shrink-0" size={15} /> {row.hospital || "Rumah sakit belum ditentukan"}</p>
         {row.note ? <p className="mt-3 line-clamp-3 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">{row.note}</p> : null}
         {row.owner ? <p className="mt-3 text-xs font-medium text-blue-700">Owner: {row.owner}</p> : null}
+        {row.subdis ? <p className="mt-1 text-xs font-medium text-violet-700">Subdis: {row.subdis}</p> : null}
         <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
           <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-500">Riwayat</span><span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-indigo-700">{journeyLabel[stage]}</span></div>
           {row.productOffered ? <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-slate-700"><Package size={13} /> {row.productOffered}</p> : <p className="mt-2 text-xs text-amber-700">Produk belum ditentukan</p>}
@@ -1572,7 +1877,30 @@ function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onSe
         </div>
       </div>
       <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+        <button type="button" disabled={busy} onClick={() => onUsage(row)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"><Repeat2 size={14} /> Gunakan Ulang · Pilih Implant</button>
         <button type="button" disabled={busy} onClick={() => onJourney(row)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">{stage === "REPEAT_USE" ? <Repeat2 size={14} /> : <Target size={14} />}{stage === "REPEAT_USE" ? "Catat Pemakaian Lagi" : `Lanjut: ${journeyLabel[journeyOrder[Math.min(journeyOrder.indexOf(stage) + 1, journeyOrder.length - 1)]]}`}</button>
+        {journeyOrder.indexOf(stage) < journeyOrder.length - 2 ? (
+          <label className="relative w-full">
+            <span className="sr-only">Loncat ke tahap</span>
+            <select
+              defaultValue=""
+              disabled={busy}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => {
+                event.stopPropagation();
+                const requestedStage = event.target.value as CustomerJourneyStage;
+                if (requestedStage) onJourney(row, requestedStage);
+                event.target.value = "";
+              }}
+              className="h-10 w-full rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 outline-none focus:border-violet-400 disabled:opacity-50"
+            >
+              <option value="">Loncat ke tahap lain…</option>
+              {journeyOrder.slice(journeyOrder.indexOf(stage) + 2).map((targetStage) => (
+                <option key={targetStage} value={targetStage}>Ke {journeyLabel[targetStage]}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <button type="button" disabled={busy} onClick={() => onEdit(row)} className="inline-flex items-center justify-center rounded-lg border border-slate-200 px-2.5 text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50" title="Edit customer"><Pencil size={15} /></button>
         <button type="button" disabled={busy} onClick={() => onDecision(row, "TARGETED")} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"><Target size={14} /> Targetkan</button>
         <button type="button" disabled={busy || row.status === "APPROVED"} title="Pindahkan customer ke status Existing" onClick={() => onDecision(row, "APPROVED")} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:bg-emerald-100 disabled:text-emerald-700 disabled:opacity-100"><CheckCircle2 size={14} /> {row.status === "APPROVED" ? "Existing" : "Jadikan Existing"}</button>
@@ -1584,7 +1912,7 @@ function CustomerCard({ row, busy, onDecision, onEdit, onDelete, onJourney, onSe
   );
 }
 
-function CustomerTable({ rows, onSelect, onEdit }: { rows: CustomerMappingRow[]; onSelect: (id: string) => void; onEdit: (row: CustomerMappingRow) => void }) {
+function CustomerTable({ rows, onSelect, onEdit, onUsage }: { rows: CustomerMappingRow[]; onSelect: (id: string) => void; onEdit: (row: CustomerMappingRow) => void; onUsage: (row: CustomerMappingRow) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="min-w-[1200px] w-full text-left text-xs">
@@ -1609,7 +1937,7 @@ function CustomerTable({ rows, onSelect, onEdit }: { rows: CustomerMappingRow[];
               <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 font-semibold ring-1 ${statusStyle[row.status]}`}>{statusLabel[row.status]}</span></td>
               <td className="px-4 py-3 font-medium text-indigo-700">{journeyLabel[row.journeyStage || "PROSPECT"]}</td>
               <td className="px-4 py-3 text-center font-semibold">{row.usageCount || 0}x</td>
-              <td className="px-4 py-3"><button type="button" onClick={(event) => { event.stopPropagation(); onEdit(row); }} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-white"><Pencil size={14} /></button></td>
+              <td className="px-4 py-3"><div className="flex gap-1.5"><button type="button" onClick={(event) => { event.stopPropagation(); onUsage(row); }} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-2 font-semibold text-white"><Repeat2 size={13} /> Gunakan</button><button type="button" onClick={(event) => { event.stopPropagation(); onEdit(row); }} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-white"><Pencil size={14} /></button></div></td>
             </tr>
           ))}
         </tbody>
@@ -1707,6 +2035,7 @@ function CustomerFormModal({ form, saving, missingFields, intendedStatus, onChan
           {form.customerType === "TARGET" ? <div className={`rounded-xl border p-3 ${priorityBadgeStyle[form.priority]}`}><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold">Priority otomatis</p><p className="mt-1 text-[10px] opacity-75">Dihitung dari jumlah dan jenis case operasi.</p></div><strong className="rounded-full bg-white/70 px-3 py-1 text-sm">{form.priority}</strong></div></div> : <FormSelect label="Priority" value={form.priority} options={["HIGH", "MEDIUM", "LOW"]} onChange={(value) => field("priority", value)} error={missingFields.includes("Priority")} required />}
           <FormInput label="Territory" value={form.territory} onChange={(value) => field("territory", value)} placeholder="Contoh: BALI" error={missingFields.includes("Territory")} required />
           <FormInput label="Owner / Sales PIC" value={form.owner} onChange={(value) => field("owner", value)} placeholder="Nama owner atau sales" error={missingFields.includes("Owner / Sales PIC")} required />
+          <FormInput label="Subdis / Subdistributor" value={form.subdis} onChange={(value) => field("subdis", value)} placeholder="Nama subdis yang menangani customer" />
           <FormInput label="Hospital" value={form.hospital} onChange={(value) => field("hospital", value)} placeholder="Nama rumah sakit" error={missingFields.includes("Hospital")} required />
           <FormInput label="Dokter" value={form.doctor} onChange={(value) => field("doctor", value)} placeholder="Nama dokter" error={missingFields.includes("Dokter")} required />
           <FormInput label="Nomor handphone" value={form.phone} onChange={(value) => field("phone", value)} placeholder="Contoh: 0812..." />

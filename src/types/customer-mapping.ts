@@ -46,4 +46,5 @@ export interface CustomerMappingRow {
   orthopedicCaseTypes: string;
   implantVendors: string;
   vendorSupport: string;
+  subdis: string;
 }

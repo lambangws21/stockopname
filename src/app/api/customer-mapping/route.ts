@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
     const targetAction =
       body.intent === "upsert"
         ? "customerUpsert"
+        : body.intent === "usage"
+          ? "customerUsageCreate"
         : body.intent === "journey"
           ? "customerJourney"
           : "customerDecision";
@@ -63,6 +65,8 @@ export async function POST(req: NextRequest) {
       targetAction === "customerUpsert" &&
       (typeof body.photoDataUrl === "string" ||
         Object.prototype.hasOwnProperty.call(body, "photoFileId"));
+    const requiresOperationUsageSupport = targetAction === "customerUsageCreate";
+    const requiresSubdisSupport = Object.prototype.hasOwnProperty.call(body, "subdis");
     const requiresUsageSupport =
       (targetAction === "customerUpsert" || targetAction === "customerJourney") &&
       (Object.prototype.hasOwnProperty.call(body, "implantUsed") ||
@@ -80,6 +84,8 @@ export async function POST(req: NextRequest) {
       !capabilityResponse.ok ||
       capability?.status !== "success" ||
       capability?.module !== "CustomerMapping" ||
+      (requiresOperationUsageSupport && Number(capability?.version || 0) < 53) ||
+      (requiresSubdisSupport && Number(capability?.version || 0) < 53) ||
       (requiresTargetProfileSupport && Number(capability?.version || 0) < 10) ||
       (requiresJourneyHistorySupport && Number(capability?.version || 0) < 8) ||
       (requiresUsageHospitalSupport && Number(capability?.version || 0) < 7) ||
@@ -93,7 +99,11 @@ export async function POST(req: NextRequest) {
           status: "error",
           code: "CUSTOMER_SCRIPT_NOT_DEPLOYED",
           message:
-            requiresTargetProfileSupport
+            requiresOperationUsageSupport
+              ? "Database pemakaian operasi dan foto memerlukan Apps Script terbaru. Deploy ulang docs/appscript.gs terlebih dahulu."
+              : requiresSubdisSupport
+              ? "Informasi Subdis memerlukan Apps Script Customer Mapping terbaru. Deploy ulang docs/appscript.gs terlebih dahulu."
+              : requiresTargetProfileSupport
               ? "Profil potensi dan priority otomatis memerlukan Apps Script Customer Mapping versi 10. Deploy ulang docs/appscript.gs terlebih dahulu."
               : requiresJourneyHistorySupport
               ? "Form journey bertahap dan sheet CustomerUsageHistory memerlukan Apps Script Customer Mapping versi 8. Deploy ulang docs/appscript.gs terlebih dahulu."

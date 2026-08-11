@@ -199,6 +199,7 @@ const CUSTOMER_HEADERS = [
   "OrthopedicCaseTypes",
   "ImplantVendors",
   "VendorSupport",
+  "Subdis",
 ];
 
 const CUSTOMER_USAGE_HEADERS = [
@@ -219,6 +220,14 @@ const CUSTOMER_USAGE_HEADERS = [
   "Outcome",
   "Owner",
   "RecordedBy",
+  "PatientName",
+  "OperationDate",
+  "ImplantItemsJson",
+  "PhotoUrl",
+  "PhotoFileId",
+  "PhotoNote",
+  "HandoverID",
+  "Source",
 ];
 
 const MASTER_HEADERS = [
@@ -1464,6 +1473,115 @@ function deleteHandovers(payload) {
   }
 }
 
+function normalizeCustomerMatchValue(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/^DR\.?\s*/i, "")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function syncHandoverToCustomerUsage(handover, usedItems, actor) {
+  if (!handover || !handover.ID || !usedItems.length) {
+    return { linked: false, reason: "NO_USED_ITEMS" };
+  }
+  const doctorKey = normalizeCustomerMatchValue(handover.Surgeon);
+  const hospitalKey = normalizeCustomerMatchValue(handover.Hospital);
+  if (!doctorKey || !hospitalKey) {
+    return { linked: false, reason: "DOCTOR_OR_HOSPITAL_EMPTY" };
+  }
+
+  const customerSheet = getCustomerSheet();
+  const customerRows = customerSheet.getDataRange().getValues();
+  const matches = [];
+  for (var customerIndex = 1; customerIndex < customerRows.length; customerIndex++) {
+    const customer = customerArrayToObject(customerRows[customerIndex]);
+    if (normalizeCustomerMatchValue(customer.Doctor) !== doctorKey) continue;
+    const hospitals = [customer.Hospital, customer.PracticeHospital2, customer.PracticeHospital3]
+      .map(normalizeCustomerMatchValue)
+      .filter(Boolean);
+    if (hospitals.indexOf(hospitalKey) >= 0) {
+      matches.push({ rowIndex: customerIndex + 1, customer: customer, values: customerRows[customerIndex] });
+    }
+  }
+  if (matches.length !== 1) {
+    return {
+      linked: false,
+      reason: matches.length ? "CUSTOMER_AMBIGUOUS" : "CUSTOMER_NOT_FOUND",
+      doctor: handover.Surgeon,
+      hospital: handover.Hospital,
+      matchCount: matches.length,
+    };
+  }
+
+  const match = matches[0];
+  const usageSheet = getCustomerUsageSheet();
+  const usageRows = usageSheet.getDataRange().getValues();
+  const handoverColumn = CUSTOMER_USAGE_HEADERS.indexOf("HandoverID");
+  let existingUsageRow = -1;
+  for (var usageIndex = 1; usageIndex < usageRows.length; usageIndex++) {
+    if (String(usageRows[usageIndex][handoverColumn] || "") === String(handover.ID)) {
+      existingUsageRow = usageIndex + 1;
+      break;
+    }
+  }
+
+  const implantText = usedItems.map(function (item) {
+    return String(item.description || item.ref || "Implant") +
+      " [REF " + String(item.ref || "-") +
+      " · LOT " + String(item.lot || "-") +
+      " · " + safeNumber(item.qty) + " pcs]";
+  }).join(", ");
+  const operationDate = handover.OperationDate || handover.HandoverDate || handover.ProcedureCompletedAt || new Date();
+  const now = new Date();
+
+  if (existingUsageRow > 0) {
+    const existing = usageSheet.getRange(existingUsageRow, 1, 1, CUSTOMER_USAGE_HEADERS.length).getValues()[0];
+    const jsonColumn = CUSTOMER_USAGE_HEADERS.indexOf("ImplantItemsJson");
+    let previousItems = [];
+    try { previousItems = JSON.parse(String(existing[jsonColumn] || "[]")); } catch (error) { previousItems = []; }
+    const mergedItems = previousItems.concat(usedItems);
+    existing[CUSTOMER_USAGE_HEADERS.indexOf("Timestamp")] = now;
+    existing[CUSTOMER_USAGE_HEADERS.indexOf("ProductUsed")] = mergedItems.map(function (item) {
+      return String(item.description || item.ref || "Implant") + " (" + safeNumber(item.qty) + " pcs)";
+    }).join(", ");
+    existing[jsonColumn] = JSON.stringify(mergedItems);
+    existing[CUSTOMER_USAGE_HEADERS.indexOf("OperationDate")] = operationDate;
+    existing[CUSTOMER_USAGE_HEADERS.indexOf("Note")] = normalizeCustomerValue(handover.CompletionNote);
+    usageSheet.getRange(existingUsageRow, 1, 1, CUSTOMER_USAGE_HEADERS.length).setValues([existing]);
+    return { linked: true, updated: true, customerId: match.customer.ID, usageId: existing[0] };
+  }
+
+  const previousUsageCount = safeNumber(match.customer.UsageCount);
+  const usageCount = Math.max(1, previousUsageCount + 1);
+  const usageType = previousUsageCount > 0 ? "REPEAT_USE" : "FIRST_USE";
+  const usageId = Utilities.getUuid();
+  usageSheet.appendRow([
+    usageId, now, match.customer.ID, normalizeCustomerValue(handover.Surgeon),
+    normalizeCustomerValue(match.customer.CustomerType), normalizeCustomerValue(match.customer.Territory),
+    normalizeCustomerValue(handover.Hospital), implantText, normalizeCustomerValue(handover.Procedure),
+    usageType, usageCount, normalizeCustomerValue(match.customer.ProductOffered),
+    normalizeCustomerValue(handover.CompletionNote), normalizeCustomerValue(match.customer.Plan), "",
+    normalizeCustomerValue(match.customer.Owner), normalizeCustomerValue(actor), "", operationDate,
+    JSON.stringify(usedItems), "", "", "Otomatis dari dokumen serah terima", handover.ID, "SERAH_TERIMA",
+  ]);
+
+  const nextCustomer = match.values.slice();
+  while (nextCustomer.length < CUSTOMER_HEADERS.length) nextCustomer.push("");
+  nextCustomer[13] = now;
+  nextCustomer[16] = usageType;
+  nextCustomer[19] = match.customer.FirstUsedAt || now;
+  nextCustomer[20] = operationDate;
+  nextCustomer[21] = usageCount;
+  nextCustomer[30] = implantText;
+  nextCustomer[31] = normalizeCustomerValue(handover.Procedure);
+  nextCustomer[32] = normalizeCustomerValue(handover.Hospital);
+  customerSheet.getRange(match.rowIndex, 1, 1, CUSTOMER_HEADERS.length).setValues([nextCustomer]);
+  logCustomerHistory(match.customer.ID, "USAGE_FROM_HANDOVER", match.customer, customerArrayToObject(nextCustomer), actor);
+  return { linked: true, created: true, customerId: match.customer.ID, usageId: usageId };
+}
+
 function settleHandoverInventory(payload) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) {
@@ -1489,6 +1607,7 @@ function settleHandoverInventory(payload) {
     normalizeSheet(stockSheet);
     const stockRows = stockSheet.getDataRange().getValues();
     const historyEntries = [];
+    const customerUsageItems = [];
     const warningByRow = {};
     const updatedItems = currentItems.map(function (item, index) {
       const requested = requestedItems[index] || item;
@@ -1540,6 +1659,14 @@ function settleHandoverInventory(payload) {
         );
       }
       if (usedDelta > 0) {
+        customerUsageItems.push({
+          ref: String(item.partNumber || ""),
+          lot: String(item.batch || ""),
+          description: String(item.description || item.name || item.partNumber || "Implant"),
+          qty: usedDelta,
+          supplySource: supplySource,
+          stockRow: stockRow,
+        });
         const beforeUsed = rowArrayToObject(stockRows[stockIndex], stockRow);
         const usedRow = stockRows[stockIndex].slice();
         usedRow[7] = safeNumber(usedRow[7]) + usedDelta;
@@ -1626,7 +1753,23 @@ function settleHandoverInventory(payload) {
     current.CompletionNote = String(payload.completionNote || current.CompletionNote || "Tindakan selesai");
     current.By = payload.by || current.Receiver || current.By || "";
     current._allowPostedItems = true;
-    return saveHandover(current, true);
+    const saved = saveHandover(current, true);
+    try {
+      saved.customerMappingSync = syncHandoverToCustomerUsage(
+        current,
+        customerUsageItems,
+        payload.by || current.Receiver || "Rumah Sakit"
+      );
+    } catch (customerSyncError) {
+      saved.customerMappingSync = {
+        linked: false,
+        reason: "SYNC_ERROR",
+        message: customerSyncError && customerSyncError.message
+          ? customerSyncError.message
+          : String(customerSyncError),
+      };
+    }
+    return saved;
   } finally {
     lock.releaseLock();
   }
@@ -3832,6 +3975,94 @@ function listCustomerUsage() {
   return { status: "success", data: data, total: data.length, sheet: CUSTOMER_USAGE_SHEET };
 }
 
+function saveCustomerUsagePhoto(dataUrl, usageId) {
+  const match = String(dataUrl || "").match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!match) throw new Error("Data foto pemakaian tidak valid");
+  const folder = getDoctorPhotoFolder();
+  const extension = match[1].indexOf("png") >= 0 ? "png" : "jpg";
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(match[2]),
+    match[1],
+    "usage-" + usageId + "." + extension
+  );
+  const file = folder.createFile(blob);
+  return { fileId: file.getId(), url: file.getUrl() };
+}
+
+function createCustomerUsage(payload) {
+  const input = payload || {};
+  const customerId = normalizeCustomerValue(input.customerId);
+  const doctor = normalizeCustomerValue(input.doctor);
+  const patientName = normalizeCustomerValue(input.patientName);
+  const hospital = normalizeCustomerValue(input.hospital);
+  const operationDate = normalizeCustomerValue(input.operationDate);
+  const procedureType = normalizeCustomerValue(input.procedureType);
+  const implantItems = Array.isArray(input.implantItems)
+    ? input.implantItems.map(normalizeCustomerValue).filter(Boolean)
+    : normalizeCustomerValue(input.implantUsed).split(/[,\n]/).map(normalizeCustomerValue).filter(Boolean);
+  if (!customerId || !doctor || !patientName || !hospital || !operationDate || !procedureType || !implantItems.length) {
+    return { status: "error", message: "Operator, pasien, rumah sakit, tanggal, jenis operasi, dan implant wajib diisi" };
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const customerSheet = getCustomerSheet();
+    const values = customerSheet.getDataRange().getValues();
+    let index = -1;
+    for (var i = 1; i < values.length; i++) {
+      if (normalizeCustomerValue(values[i][0]) === customerId) { index = i; break; }
+    }
+    if (index < 1) return { status: "error", message: "Data dokter/customer tidak ditemukan" };
+
+    const before = customerArrayToObject(values[index]);
+    const now = new Date();
+    const usageId = Utilities.getUuid();
+    let photoUrl = "";
+    let photoFileId = "";
+    if (input.photoDataUrl) {
+      const photo = saveCustomerUsagePhoto(input.photoDataUrl, usageId);
+      photoUrl = photo.url;
+      photoFileId = photo.fileId;
+    }
+    const usageCount = Math.max(1, safeNumber(before.UsageCount) + 1);
+    const usageType = safeNumber(before.UsageCount) > 0 ? "REPEAT_USE" : "FIRST_USE";
+    const implantUsed = implantItems.join(", ");
+    const actor = normalizeCustomerValue(input.by || Session.getActiveUser().getEmail());
+
+    const usageSheet = getCustomerUsageSheet();
+    usageSheet.appendRow([
+      usageId, now, customerId, doctor, normalizeCustomerValue(before.CustomerType),
+      normalizeCustomerValue(before.Territory), hospital, implantUsed, procedureType,
+      usageType, usageCount, normalizeCustomerValue(before.ProductOffered),
+      normalizeCustomerValue(input.note), normalizeCustomerValue(before.Plan),
+      normalizeCustomerValue(input.outcome), normalizeCustomerValue(input.owner || before.Owner), actor,
+      patientName, operationDate, JSON.stringify(implantItems), photoUrl, photoFileId,
+      normalizeCustomerValue(input.photoNote),
+    ]);
+
+    const next = values[index].slice();
+    while (next.length < CUSTOMER_HEADERS.length) next.push("");
+    next[13] = now;
+    next[16] = usageType;
+    next[19] = before.FirstUsedAt || now;
+    next[20] = now;
+    next[21] = usageCount;
+    next[30] = implantUsed;
+    next[31] = procedureType;
+    next[32] = hospital;
+    customerSheet.getRange(index + 1, 1, 1, CUSTOMER_HEADERS.length).setValues([next]);
+    logCustomerHistory(customerId, "USAGE_" + usageType, before, customerArrayToObject(next), actor);
+    return {
+      status: "success",
+      data: customerObjectForClient(customerArrayToObject(next)),
+      usage: { usageId: usageId, photoUrl: photoUrl, photoFileId: photoFileId },
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function customerArrayToObject(row) {
   const item = {};
   CUSTOMER_HEADERS.forEach(function (header, index) {
@@ -3879,6 +4110,7 @@ function customerObjectForClient(item) {
     orthopedicCaseTypes: normalizeCustomerValue(item.OrthopedicCaseTypes),
     implantVendors: normalizeCustomerValue(item.ImplantVendors),
     vendorSupport: normalizeCustomerValue(item.VendorSupport),
+    subdis: normalizeCustomerValue(item.Subdis),
   };
 }
 
@@ -3939,6 +4171,7 @@ function customerRowFromPayload(payload, previous) {
     orthopedicCaseTypes,
     hasOwn(input, "implantVendors") ? normalizeCustomerValue(input.implantVendors) : normalizeCustomerValue(old.ImplantVendors),
     hasOwn(input, "vendorSupport") ? normalizeCustomerValue(input.vendorSupport) : normalizeCustomerValue(old.VendorSupport),
+    hasOwn(input, "subdis") ? normalizeCustomerValue(input.subdis) : normalizeCustomerValue(old.Subdis),
   ];
 }
 
@@ -4275,8 +4508,13 @@ function advanceCustomerJourney(payload) {
 
     const before = customerArrayToObject(values[index]);
     const currentStage = normalizeCustomerEnum(before.JourneyStage, ["PROSPECT", "TARGETED", "OFFERED", "FIRST_USE", "REPEAT_USE"], "PROSPECT");
+    const skippedStages = [];
     if (stageOrder[nextStage] > stageOrder[currentStage] + 1) {
-      return { status: "error", message: "Tahap journey harus dijalankan berurutan" };
+      ["PROSPECT", "TARGETED", "OFFERED", "FIRST_USE", "REPEAT_USE"].forEach(function (stage) {
+        if (stageOrder[stage] > stageOrder[currentStage] && stageOrder[stage] < stageOrder[nextStage]) {
+          skippedStages.push(stage);
+        }
+      });
     }
 
     const owner = normalizeCustomerValue(payload.owner || before.Owner);
@@ -4374,8 +4612,30 @@ function advanceCustomerJourney(payload) {
       ]);
       usageSheet.autoResizeColumns(1, CUSTOMER_USAGE_HEADERS.length);
     }
-    logCustomerHistory(id, "JOURNEY_" + nextStage, before, after, actor);
-    return { status: "success", data: customerObjectForClient(after) };
+    var auditBefore = before;
+    skippedStages.forEach(function (stage) {
+      var auditAfter = Object.assign({}, auditBefore, {
+        JourneyStage: stage,
+        UpdatedAt: now,
+      });
+      logCustomerHistory(id, "JOURNEY_AUTO_RECORDED_" + stage, auditBefore, auditAfter, actor);
+      auditBefore = auditAfter;
+    });
+    logCustomerHistory(
+      id,
+      skippedStages.length ? "JOURNEY_JUMP_TO_" + nextStage : "JOURNEY_" + nextStage,
+      auditBefore,
+      after,
+      actor
+    );
+    return {
+      status: "success",
+      data: customerObjectForClient(after),
+      skippedStages: skippedStages,
+      message: skippedStages.length
+        ? "Tahap " + skippedStages.join(", ") + " tetap dicatat otomatis"
+        : "Journey berhasil diperbarui",
+    };
   } finally {
     lock.releaseLock();
   }
@@ -4518,6 +4778,7 @@ function doGet(e) {
             "customerDelete",
             "customerJourney",
             "customerUsageList",
+            "customerUsageCreate",
           ],
         },
       });
@@ -4538,7 +4799,7 @@ function doGet(e) {
         status: "success",
         module: "CustomerMapping",
         version: APP_VERSION,
-        actions: ["customerList", "customerBulkImport", "customerDecision", "customerUpsert", "customerDelete", "customerJourney", "customerUsageList"],
+        actions: ["customerList", "customerBulkImport", "customerDecision", "customerUpsert", "customerDelete", "customerJourney", "customerUsageList", "customerUsageCreate"],
       });
     }
     if (action === "customerList") return cors(listCustomers(req.parameter));
@@ -4587,6 +4848,7 @@ function doPost(e) {
     if (payload.action === "customerUpsert") return cors(upsertCustomer(payload));
     if (payload.action === "customerDelete") return cors(deleteCustomer(payload));
     if (payload.action === "customerJourney") return cors(advanceCustomerJourney(payload));
+    if (payload.action === "customerUsageCreate") return cors(createCustomerUsage(payload));
     if (payload.action === "warningUpdate") return cors(updateStockWarningWorkflow(payload));
     if (payload.action === "warningQuickAction") return cors(quickUpdateStockWarning(payload));
     if (payload.action === "historyDelete") return cors(deleteHistoryRows(payload));
