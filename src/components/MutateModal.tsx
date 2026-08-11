@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ArrowLeft,
   Building2,
   Check,
   PackagePlus,
@@ -305,7 +304,13 @@ export default function MutateModal({
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 px-0 pb-0 backdrop-blur-sm sm:items-center sm:p-4"
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 12px)" }}
+    >
       {loading && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20">
           <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold shadow-xl dark:bg-zinc-900">
@@ -314,8 +319,8 @@ export default function MutateModal({
           </div>
         </div>
       )}
-      <motion.div initial={{ opacity: 0, y: 34, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="max-h-[100dvh] w-full overflow-y-auto rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:max-w-lg sm:rounded-3xl sm:pb-0">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-zinc-900/95">
+      <motion.div initial={{ opacity: 0, y: 34, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="flex max-h-full w-full flex-col overflow-hidden rounded-t-3xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl dark:bg-zinc-900 sm:max-h-[92vh] sm:max-w-lg sm:rounded-3xl sm:pb-0">
+        <div className="relative z-20 flex shrink-0 items-center justify-between border-b bg-white/95 px-4 py-3 backdrop-blur dark:bg-zinc-900/95">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-blue-600">
               {selectedReason ? "Langkah 2 dari 2" : "Langkah 1 dari 2"}
@@ -325,14 +330,14 @@ export default function MutateModal({
           <button
             type="button"
             onClick={close}
-            className="rounded-full border p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className="flex size-11 shrink-0 items-center justify-center rounded-2xl border bg-white shadow-sm hover:bg-zinc-100 dark:bg-zinc-900 dark:hover:bg-zinc-800"
             aria-label="Tutup"
           >
-            <X size={18} />
+            <X size={20} />
           </button>
         </div>
 
-        <div className="space-y-4 p-4 sm:p-5">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 dark:border-zinc-700 dark:bg-zinc-800">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[9px] font-black uppercase tracking-[0.14em] text-blue-600">
@@ -345,17 +350,9 @@ export default function MutateModal({
               )}
             </div>
             <div className="mt-1.5 text-sm font-black leading-5 sm:text-base">{row.Deskripsi}</div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-blue-200 bg-white px-3 py-2.5 dark:border-blue-900 dark:bg-zinc-900">
-                <span className="block text-[8px] font-black uppercase tracking-wide text-zinc-400">Nomor REF</span>
-                <b className="mt-1 block break-all text-sm text-blue-700 dark:text-blue-300">{row.NoStok || "-"}</b>
-              </div>
-              <div className="rounded-xl border border-amber-200 bg-white px-3 py-2.5 dark:border-amber-900 dark:bg-zinc-900">
-                <span className="block text-[8px] font-black uppercase tracking-wide text-zinc-400">LOT / Batch</span>
-                <b className="mt-1 block break-all text-sm text-amber-700 dark:text-amber-300">{row.Batch || "-"}</b>
-              </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-black">
+              <span className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-blue-700 dark:border-blue-900 dark:bg-zinc-900 dark:text-blue-300">REF {editedRef || "Belum diisi"}</span>
+              <span className={`rounded-lg border bg-white px-2 py-1.5 dark:bg-zinc-900 ${editedLot ? "border-amber-200 text-amber-700 dark:border-amber-900 dark:text-amber-300" : "border-red-200 text-red-600 dark:border-red-900"}`}>LOT {editedLot || "belum diisi"}</span>
               <span className="rounded-lg bg-white px-2 py-1 font-black text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-white">
                 Stok {row.TotalQty} pcs
               </span>
@@ -370,7 +367,13 @@ export default function MutateModal({
               </span>
             </div>
             {identityEditorOpen && (
-              <div className="mt-3 space-y-2 border-t pt-3">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[70] flex items-end bg-slate-950/60 pt-[calc(env(safe-area-inset-top)+0.75rem)] backdrop-blur-sm sm:items-center sm:justify-center sm:p-4">
+              <motion.section initial={{ y: 36 }} animate={{ y: 0 }} className="flex max-h-full w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl dark:bg-zinc-900 sm:max-h-[82vh] sm:max-w-md sm:rounded-3xl">
+                <header className="flex shrink-0 items-center justify-between border-b px-4 py-3">
+                  <div><p className="text-[9px] font-black uppercase tracking-[.14em] text-blue-600">Pilih varian fisik</p><h3 className="text-sm font-black">Edit REF dan LOT</h3></div>
+                  <button type="button" onClick={() => setIdentityEditorOpen(false)} className="flex size-11 items-center justify-center rounded-2xl border bg-white shadow-sm dark:bg-zinc-900" aria-label="Tutup pilihan REF dan LOT"><X size={20} /></button>
+                </header>
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-4">
                 <p className="text-[9px] font-bold leading-4 text-zinc-500">
                   Pilih REF dan LOT fisik yang benar. Daftar dibatasi pada brand dan kategori implant yang sama.
                 </p>
@@ -427,6 +430,11 @@ export default function MutateModal({
                   )}
                 </div>
               </div>
+              <footer className="shrink-0 border-t bg-white px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:bg-zinc-900">
+                <button type="button" onClick={() => setIdentityEditorOpen(false)} className="h-11 w-full rounded-xl bg-blue-600 text-xs font-black text-white">Gunakan REF & LOT ini</button>
+              </footer>
+              </motion.section>
+              </motion.div>
             )}
           </div>
 
@@ -457,20 +465,9 @@ export default function MutateModal({
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={reset}
-                className="inline-flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white"
-              >
-                <ArrowLeft size={14} /> Ganti tindakan
-              </button>
-
-              <div className={`rounded-2xl border p-3 ${selectedAction?.color}`}>
-                <div className="font-bold">{selectedAction?.label}</div>
-                <div className="text-xs opacity-80">
-                  {selectedAction?.description}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-current/15 pt-2.5 text-[9px] font-black">
+              <div className={`rounded-xl border px-3 py-2.5 ${selectedAction?.color}`}>
+                <div className="flex items-center justify-between gap-2"><div className="font-bold">{selectedAction?.label}</div><button type="button" onClick={reset} className="text-[9px] font-black underline">Ganti</button></div>
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] font-black">
                   <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">REF {editedRef || "-"}</span>
                   <span className="rounded-md bg-white/75 px-2 py-1 dark:bg-zinc-900/60">LOT {editedLot || "-"}</span>
                 </div>
@@ -630,7 +627,7 @@ export default function MutateModal({
                 type="button"
                 onClick={requestConfirmation}
                 disabled={loading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-bold text-white hover:bg-blue-500 disabled:opacity-50"
+                className="sticky bottom-0 z-10 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-bold text-white shadow-[0_-8px_24px_rgba(255,255,255,0.95)] hover:bg-blue-500 disabled:opacity-50 dark:shadow-[0_-8px_24px_rgba(24,24,27,0.95)]"
               >
                 <Check size={18} />
                 {loading ? "Menyimpan..." : `Simpan ${selectedAction?.label}`}
