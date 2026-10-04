@@ -346,7 +346,7 @@ export default function HospitalStockPage() {
         <div className="mx-auto max-w-6xl">
           <div className="flex items-center justify-between">
             <Link
-              href="/"
+              href="/stock"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300"
             >
               <ArrowLeft size={15} /> Kembali

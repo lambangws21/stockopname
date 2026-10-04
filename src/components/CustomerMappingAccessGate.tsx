@@ -93,7 +93,7 @@ export default function CustomerMappingAccessGate({
           </button>
 
           <Link
-            href="/"
+            href="/stock"
             className="inline-flex h-10 w-full items-center justify-center gap-2 text-xs font-semibold text-zinc-500 hover:text-zinc-800 dark:hover:text-white"
           >
             <ArrowLeft size={14} />

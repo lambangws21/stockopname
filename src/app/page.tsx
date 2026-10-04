@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 // import KpiCards from "@/components/dashboard/KpiCard";
 import StockTablePremium from "@/components/StockTablePremium";
 import Scanner from "@/components/stock/Scanner";
+import NormmedLandingPage from "@/components/NormmedLandingPage";
 import {
   Activity,
   AlertTriangle,
@@ -1724,7 +1725,11 @@ function stockRemaining(row: StockRow) {
 }
 
 export default function Page() {
-  return <StockManagementPage />;
+  useEffect(() => {
+    document.title = "Normmed Orthopaedic Systems | Hip & Knee";
+  }, []);
+
+  return <NormmedLandingPage />;
 }
 
 /* ================= SKELETONS ================= */

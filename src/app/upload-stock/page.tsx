@@ -119,7 +119,7 @@ export default function UploadStockExcelPage() {
     <main className="min-h-dvh bg-slate-50 px-3 py-4 text-slate-950 sm:px-6 sm:py-8">
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="rounded-3xl bg-slate-950 p-5 text-white shadow-xl sm:p-7">
-          <Link href="/" className="inline-flex items-center gap-2 text-xs text-slate-300 hover:text-white">
+          <Link href="/stock" className="inline-flex items-center gap-2 text-xs text-slate-300 hover:text-white">
             <ArrowLeft size={15} /> Kembali ke Stock Management
           </Link>
           <div className="mt-5 flex items-start gap-3">

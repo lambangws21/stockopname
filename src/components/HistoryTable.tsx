@@ -54,7 +54,7 @@ export default function HistoryTable() {
       <header className="bg-[#0f172a] px-4 pb-5 pt-[max(1rem,env(safe-area-inset-top))] text-white sm:px-6">
         <div className="mx-auto max-w-5xl">
           <Link
-            href="/"
+            href="/stock"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300"
           >
             <ArrowLeft size={15} /> Kembali ke stok

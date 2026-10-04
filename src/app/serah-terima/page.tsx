@@ -974,7 +974,7 @@ function OnlineHandoverContent() {
       <header className="relative z-40 bg-[#0f172a] px-4 pb-3 pt-[max(0.65rem,env(safe-area-inset-top))] text-white shadow-lg shadow-slate-950/10 sm:sticky sm:top-0 sm:px-6 sm:pb-4 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="mx-auto max-w-[1600px]">
           <div className="flex items-center justify-between">
-            {!publicView ? <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+            {!publicView ? <Link href="/stock" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
               <ArrowLeft size={15} /> Kembali ke stok
             </Link> : <span className="text-[9px] font-black uppercase tracking-[.18em] text-blue-300">Dokumen Privat</span>}
             <div className="flex items-center gap-2">

@@ -230,7 +230,7 @@ export default function LogisticsDashboardPage() {
       <header className="bg-[#0f172a] px-4 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] text-white sm:px-6 sm:pb-5 sm:pt-[max(1rem,env(safe-area-inset-top))]">
         <div className="mx-auto max-w-6xl">
           <div className="flex items-center justify-between">
-            <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
+            <Link href="/stock" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-300">
               <ArrowLeft size={15} /> Kembali
             </Link>
             <div className="flex items-center gap-2">

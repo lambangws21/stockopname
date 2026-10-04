@@ -202,7 +202,7 @@ export default function UniversalScannerPage() {
     <main className="min-h-dvh bg-slate-50 pb-12 text-slate-950">
       <header className="sticky top-0 z-20 border-b bg-slate-950 px-4 py-3 text-white shadow-lg">
         <div className="mx-auto flex max-w-6xl items-center gap-3">
-          <Link href="/" className="grid size-10 place-items-center rounded-xl bg-white/10" aria-label="Kembali"><ArrowLeft size={19} /></Link>
+          <Link href="/stock" className="grid size-10 place-items-center rounded-xl bg-white/10" aria-label="Kembali"><ArrowLeft size={19} /></Link>
           <div><p className="text-[10px] font-bold tracking-[.22em] text-blue-300">UNIVERSAL SCANNER</p><h1 className="text-lg font-black">Scan Box Implant</h1></div>
           <span className="ml-auto rounded-full bg-emerald-400/15 px-3 py-1 text-[10px] font-bold text-emerald-300">Barcode · QR · OCR</span>
         </div>

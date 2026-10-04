@@ -22,7 +22,7 @@ const GUIDES = [
   {
     id: "stock",
     label: "Stock",
-    href: "/",
+    href: "/stock",
     icon: PackageSearch,
     summary: "Melihat stok fisik office dan katalog Support Pusat.",
     steps: [
@@ -38,7 +38,7 @@ const GUIDES = [
   {
     id: "inventory",
     label: "Lokasi & Opname",
-    href: "/",
+    href: "/stock",
     icon: ClipboardCheck,
     summary: "Mengelola saldo Office, cabang, perjalanan, dan koreksi stok fisik.",
     steps: [
@@ -179,9 +179,7 @@ function getPrivateDocumentSnapshot() {
 
 export default function AppTutorial() {
   const pathname = usePathname();
-  const current = GUIDES.find((guide) =>
-    guide.href === "/" ? pathname === "/" || pathname === "/stock" : pathname.startsWith(guide.href)
-  );
+  const current = GUIDES.find((guide) => pathname.startsWith(guide.href));
   const [open, setOpen] = useState(false);
   const privateDocumentView = useSyncExternalStore(
     subscribeUrlChange,
@@ -205,7 +203,7 @@ export default function AppTutorial() {
     return () => window.removeEventListener("open-app-tutorial", openTutorial);
   });
 
-  if (privateDocumentView) return null;
+  if (privateDocumentView || pathname.startsWith("/normmed")) return null;
 
   return (
     <>
