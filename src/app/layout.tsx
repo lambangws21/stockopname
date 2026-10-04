@@ -21,8 +21,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NEX Stock Implant",
-  description: "Stock, scanner, serah terima, dan logistik implant.",
+  title: "wicaksono | NMZB",
+  description: "Landing page wicaksono | NMZB",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
