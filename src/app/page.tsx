@@ -1726,7 +1726,7 @@ function stockRemaining(row: StockRow) {
 
 export default function Page() {
   useEffect(() => {
-    document.title = "Normmed Orthopaedic Systems | Hip & Knee";
+    document.title = "Ortho Bali | Normmed & Zimmer Biomet";
   }, []);
 
   return <NormmedLandingPage />;

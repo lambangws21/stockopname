@@ -22,7 +22,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "wicaksono | NMZB",
-  description: "Landing page wicaksono | NMZB",
+  description: "wicaksono | NMZB",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
